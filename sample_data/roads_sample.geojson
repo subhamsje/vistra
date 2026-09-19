@@ -1,0 +1,40 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "ROAD_ORR",
+      "properties": {
+        "name": "Outer Ring Road",
+        "category": "Arterial Highway",
+        "lanes": 6
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [77.6220, 12.9372],
+          [77.6250, 12.9372],
+          [77.6290, 12.9372],
+          [77.6310, 12.9372]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "ROAD_KORAMANGALA",
+      "properties": {
+        "name": "Koramangala 5th Block Main",
+        "category": "Collector Street",
+        "lanes": 4
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [77.6220, 12.9345],
+          [77.6250, 12.9345],
+          [77.6290, 12.9345]
+        ]
+      }
+    }
+  ]
+}

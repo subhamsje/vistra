@@ -9,50 +9,56 @@
   "features": [
     {
       "type": "Feature",
-      "id": "PARCEL_KA_001",
+      "id": "P78",
       "properties": {
-        "survey_khasra_no": "204/1",
+        "survey_khasra_no": "78/1A",
         "district": "BLR",
         "state": "KA",
-        "land_use": "Commercial / Residential Highrise",
-        "owner_name": "Bangalore Metro Cadastral Authority",
+        "locality": "Koramangala 5th Block / Outer Ring Road",
+        "land_use": "Mixed Commercial / Residential Urban",
+        "owner_name": "Bangalore Development Authority (BDA)",
         "base_elevation_m": 920.0,
-        "max_elevation_m": 970.0
+        "max_elevation_m": 970.0,
+        "tenure_type": "FREEHOLD",
+        "registered_area_sqm": 2450.0
       },
       "geometry": {
         "type": "Polygon",
         "coordinates": [
           [
-            [77.5912, 12.9712],
-            [77.5942, 12.9712],
-            [77.5942, 12.9742],
-            [77.5912, 12.9742],
-            [77.5912, 12.9712]
+            [77.6235, 12.9350],
+            [77.6258, 12.9350],
+            [77.6258, 12.9368],
+            [77.6235, 12.9368],
+            [77.6235, 12.9350]
           ]
         ]
       }
     },
     {
       "type": "Feature",
-      "id": "PARCEL_KA_002",
+      "id": "P79",
       "properties": {
-        "survey_khasra_no": "204/2",
+        "survey_khasra_no": "79/2",
         "district": "BLR",
         "state": "KA",
-        "land_use": "IT Park / Commercial Complex",
-        "owner_name": "Karnataka Industrial Area Development Board",
+        "locality": "Outer Ring Road Tech Zone",
+        "land_use": "Commercial IT Corridor",
+        "owner_name": "Karnataka Industrial Area Development Board (KIADB)",
         "base_elevation_m": 920.0,
-        "max_elevation_m": 970.0
+        "max_elevation_m": 970.0,
+        "tenure_type": "LEASEHOLD",
+        "registered_area_sqm": 3100.0
       },
       "geometry": {
         "type": "Polygon",
         "coordinates": [
           [
-            [77.5948, 12.9712],
-            [77.5978, 12.9712],
-            [77.5978, 12.9742],
-            [77.5948, 12.9742],
-            [77.5948, 12.9712]
+            [77.6262, 12.9350],
+            [77.6288, 12.9350],
+            [77.6288, 12.9368],
+            [77.6262, 12.9368],
+            [77.6262, 12.9350]
           ]
         ]
       }

@@ -1,0 +1,46 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "INFRA_METRO_TUNNEL_01",
+      "properties": {
+        "name": "Namma Metro Underground Pink Line",
+        "infra_type": "SUBWAY_TUNNEL",
+        "depth_min_m": 902.0,
+        "depth_max_m": 910.0,
+        "diameter_m": 6.5,
+        "crossing_parcels": ["P78", "P79"],
+        "ulpin_3d": "IN-KA-BLR-SUB-METRO-T01"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [77.6230, 12.9358],
+          [77.6260, 12.9358],
+          [77.6295, 12.9358]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "INFRA_WATER_MAIN_01",
+      "properties": {
+        "name": "BWSSB Cauvery Phase V Water Trunk Line",
+        "infra_type": "WATER_UTILITY",
+        "depth_min_m": 915.0,
+        "depth_max_m": 917.5,
+        "diameter_m": 1.8,
+        "crossing_parcels": ["P78"],
+        "ulpin_3d": "IN-KA-BLR-SUB-UTIL-W01"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [77.6235, 12.9352],
+          [77.6258, 12.9352]
+        ]
+      }
+    }
+  ]
+}
