@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { 
   MousePointer2, 
   Ruler, 
@@ -6,13 +6,14 @@ import {
   Boxes, 
   GitCompare, 
   Layers as LayersIcon, 
-  Globe, 
-  Map, 
   RotateCcw,
-  Compass
+  Compass,
+  Eye,
+  Camera,
+  ChevronDown
 } from 'lucide-react';
 import { useCadastre } from '../../store/CadastreContext';
-import { ToolMode } from '../../types/cadastre';
+import { ToolMode, CameraViewMode } from '../../types/cadastre';
 
 export const MapToolbar: React.FC = () => {
   const { 
@@ -23,8 +24,14 @@ export const MapToolbar: React.FC = () => {
     activeJurisdiction,
     triggerFlyTo,
     explodeFactor,
-    setExplodeFactor
+    setExplodeFactor,
+    viewMode,
+    setViewMode,
+    cameraMode,
+    setCameraMode
   } = useCadastre();
+
+  const [isCameraMenuOpen, setIsCameraMenuOpen] = useState(false);
 
   const handleToolClick = (tool: ToolMode) => {
     if (tool === 'layers') {
@@ -39,15 +46,26 @@ export const MapToolbar: React.FC = () => {
   };
 
   const handleResetView = () => {
+    setCameraMode('PARCEL');
     if (activeJurisdiction) {
       triggerFlyTo(activeJurisdiction.center);
     }
   };
 
+  const cameraModes: { id: CameraViewMode; label: string }[] = [
+    { id: 'CITY', label: 'City Extent' },
+    { id: 'PARCEL', label: 'Parcel Extent' },
+    { id: 'BUILDING', label: 'Building Focus' },
+    { id: 'FLOOR', label: 'Storey Level' },
+    { id: 'UNIT', label: 'Unit Detail' },
+    { id: 'TOP_DOWN', label: 'Top-Down 2D' },
+    { id: 'ORBIT', label: 'Side Isometric Orbit' }
+  ];
+
   return (
     <div className="absolute top-4 left-4 right-4 flex items-center justify-between pointer-events-none z-20">
-      {/* Floating Toolbar Pill */}
-      <div className="flex items-center space-x-1.5 p-1 bg-[#0d1321]/90 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl pointer-events-auto">
+      {/* Primary Floating Toolbar Pill */}
+      <div className="flex items-center space-x-1.5 p-1 bg-[#0d1321]/92 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl pointer-events-auto">
         <button
           onClick={() => handleToolClick('select')}
           className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow-sm ${
@@ -81,11 +99,11 @@ export const MapToolbar: React.FC = () => {
         <button
           onClick={() => handleToolClick('explode')}
           className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-            explodeFactor > 0 ? 'bg-cyan-600 text-white shadow-cyan-600/30' : 'text-slate-300 hover:bg-slate-800'
+            explodeFactor > 0 ? 'bg-cyan-600 text-white shadow-cyan-600/30 font-semibold' : 'text-slate-300 hover:bg-slate-800'
           }`}
         >
           <Boxes className="w-3.5 h-3.5" />
-          <span>{explodeFactor > 0 ? `Explode (${explodeFactor.toFixed(1)}m)` : 'Explode'}</span>
+          <span>{explodeFactor > 0 ? `Exploded (${explodeFactor.toFixed(1)}m)` : 'Explode'}</span>
         </button>
 
         <button
@@ -100,6 +118,7 @@ export const MapToolbar: React.FC = () => {
 
         <div className="h-4 w-px bg-white/10 mx-1"></div>
 
+        {/* Layers Drawer Toggle */}
         <button
           onClick={() => handleToolClick('layers')}
           className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition ${
@@ -110,37 +129,85 @@ export const MapToolbar: React.FC = () => {
           <span>Layers</span>
         </button>
 
-        <button
-          onClick={() => handleToolClick('dim')}
-          className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:bg-slate-800 transition"
-        >
-          <Globe className="w-3.5 h-3.5" />
-          <span>3D / 2D</span>
-        </button>
+        {/* Camera Preset Dropdown */}
+        <div className="relative">
+          <button
+            onClick={() => setIsCameraMenuOpen(!isCameraMenuOpen)}
+            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:bg-slate-800 transition"
+          >
+            <Camera className="w-3.5 h-3.5 text-blue-400" />
+            <span>Camera ({cameraModes.find(m => m.id === cameraMode)?.label.split(' ')[0] || 'View'})</span>
+            <ChevronDown className="w-3 h-3 text-slate-400" />
+          </button>
 
-        <button
-          onClick={() => handleToolClick('basemap')}
-          className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-            activeTool === 'basemap' ? 'bg-slate-800 text-cyan-400' : 'text-slate-300 hover:bg-slate-800'
-          }`}
-        >
-          <Map className="w-3.5 h-3.5" />
-          <span>Basemap</span>
-        </button>
+          {isCameraMenuOpen && (
+            <div className="absolute top-full mt-1.5 left-0 w-44 bg-[#0f172a] border border-white/10 rounded-xl shadow-2xl p-1.5 z-50 text-xs">
+              <div className="text-[9px] text-slate-400 px-2 py-1 uppercase tracking-wider font-semibold">Camera Presets</div>
+              {cameraModes.map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => {
+                    setCameraMode(m.id);
+                    setIsCameraMenuOpen(false);
+                  }}
+                  className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between transition ${
+                    cameraMode === m.id ? 'bg-blue-600/30 text-blue-400 font-semibold' : 'text-slate-300 hover:bg-slate-800'
+                  }`}
+                >
+                  <span>{m.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
+        {/* Reset Camera View */}
         <button
           onClick={handleResetView}
           className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:bg-slate-800 transition"
           title="Reset camera to district extent"
         >
           <RotateCcw className="w-3.5 h-3.5" />
-          <span>Reset View</span>
+          <span>Reset</span>
         </button>
       </div>
 
-      {/* Compass Indicator */}
-      <div className="w-9 h-9 rounded-full bg-[#0d1321]/90 backdrop-blur-xl border border-white/10 flex items-center justify-center text-slate-300 shadow-2xl pointer-events-auto hover:text-cyan-400 transition cursor-pointer">
-        <Compass className="w-5 h-5 text-cyan-400" />
+      {/* Right Controls: Reality vs Analysis Toggle & Compass */}
+      <div className="flex items-center space-x-2 pointer-events-auto">
+        {/* Reality vs Analysis View Mode Switcher */}
+        <div className="flex items-center p-1 bg-[#0d1321]/92 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl text-xs font-semibold">
+          <button
+            onClick={() => setViewMode('REALITY')}
+            className={`px-3 py-1.5 rounded-lg flex items-center space-x-1.5 transition ${
+              viewMode === 'REALITY'
+                ? 'bg-blue-600 text-white shadow-md'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Eye className="w-3.5 h-3.5" />
+            <span>Reality View</span>
+          </button>
+          <button
+            onClick={() => setViewMode('ANALYSIS')}
+            className={`px-3 py-1.5 rounded-lg flex items-center space-x-1.5 transition ${
+              viewMode === 'ANALYSIS'
+                ? 'bg-cyan-600 text-white shadow-md'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Boxes className="w-3.5 h-3.5" />
+            <span>Analysis View</span>
+          </button>
+        </div>
+
+        {/* Compass Indicator */}
+        <div 
+          onClick={handleResetView}
+          className="w-10 h-10 rounded-xl bg-[#0d1321]/92 backdrop-blur-xl border border-white/10 flex items-center justify-center text-slate-300 shadow-2xl hover:text-cyan-400 transition cursor-pointer"
+          title="North-Up Orientation"
+        >
+          <Compass className="w-5 h-5 text-cyan-400" />
+        </div>
       </div>
     </div>
   );

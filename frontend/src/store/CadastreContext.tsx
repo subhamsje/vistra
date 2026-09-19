@@ -7,7 +7,9 @@ import {
   LayerVisibilityState, 
   BasemapMode, 
   ToolMode, 
-  NavView 
+  NavView,
+  CadastralViewMode,
+  CameraViewMode
 } from '../types/cadastre';
 import { cadastreApi } from '../services/api';
 
@@ -15,7 +17,15 @@ interface CadastreContextType {
   activeView: NavView;
   setActiveView: (view: NavView) => void;
   selectedEntity: EntityDetails | null;
-  setSelectedEntityId: (id: string) => Promise<void>;
+  setSelectedEntityId: (id: string | null) => Promise<void>;
+  selectedBuildingId: string;
+  setSelectedBuildingId: (bId: string) => void;
+  isPropertyPanelOpen: boolean;
+  setIsPropertyPanelOpen: (open: boolean) => void;
+  viewMode: CadastralViewMode;
+  setViewMode: (mode: CadastralViewMode) => void;
+  cameraMode: CameraViewMode;
+  setCameraMode: (mode: CameraViewMode) => void;
   jurisdictions: Jurisdiction[];
   activeJurisdiction: Jurisdiction | null;
   setActiveJurisdiction: (j: Jurisdiction) => void;
@@ -58,6 +68,10 @@ const CadastreContext = createContext<CadastreContextType | undefined>(undefined
 export const CadastreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [activeView, setActiveView] = useState<NavView>('3d_cadastre');
   const [selectedEntity, setSelectedEntity] = useState<EntityDetails | null>(null);
+  const [selectedBuildingId, setSelectedBuildingId] = useState<string>('B12');
+  const [isPropertyPanelOpen, setIsPropertyPanelOpen] = useState<boolean>(true);
+  const [viewMode, setViewMode] = useState<CadastralViewMode>('REALITY');
+  const [cameraMode, setCameraMode] = useState<CameraViewMode>('BUILDING');
   const [jurisdictions, setJurisdictions] = useState<Jurisdiction[]>([]);
   const [activeJurisdiction, setActiveJurisdiction] = useState<Jurisdiction | null>(null);
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -68,7 +82,7 @@ export const CadastreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [explodeFactor, setExplodeFactor] = useState<number>(0);
   const [basemap, setBasemap] = useState<BasemapMode>('satellite');
   const [activeTool, setActiveTool] = useState<ToolMode>('select');
-  const [isLayersPanelOpen, setIsLayersPanelOpen] = useState<boolean>(true);
+  const [isLayersPanelOpen, setIsLayersPanelOpen] = useState<boolean>(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
   const [flyToTarget, setFlyToTarget] = useState<[number, number] | null>(null);
 
@@ -78,13 +92,16 @@ export const CadastreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         cadastreApi.getJurisdictions(),
         cadastreApi.getUserProfile(),
         cadastreApi.getPipelineStatus(),
-        cadastreApi.getEntityDetails('B12_F3_U04')
+        cadastreApi.getEntityDetails('B12_F3_U304')
       ]);
       setJurisdictions(jList);
       if (jList.length > 0) setActiveJurisdiction(jList[0]);
       setUser(uProfile);
       setPipelineStatus(pStatus);
       setSelectedEntity(initEntity);
+      if (initEntity && initEntity.building_id) {
+        setSelectedBuildingId(initEntity.building_id);
+      }
     } catch (err) {
       console.error('Failed loading initial cadastre state', err);
     }
@@ -103,10 +120,19 @@ export const CadastreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  const setSelectedEntityId = async (id: string) => {
+  const setSelectedEntityId = async (id: string | null) => {
+    if (!id) {
+      setSelectedEntity(null);
+      setIsPropertyPanelOpen(false);
+      return;
+    }
     try {
       const details = await cadastreApi.getEntityDetails(id);
       setSelectedEntity(details);
+      setIsPropertyPanelOpen(true);
+      if (details.building_id) {
+        setSelectedBuildingId(details.building_id);
+      }
     } catch (err) {
       console.error('Failed loading entity details for', id, err);
     }
@@ -127,6 +153,14 @@ export const CadastreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setActiveView,
         selectedEntity,
         setSelectedEntityId,
+        selectedBuildingId,
+        setSelectedBuildingId,
+        isPropertyPanelOpen,
+        setIsPropertyPanelOpen,
+        viewMode,
+        setViewMode,
+        cameraMode,
+        setCameraMode,
         jurisdictions,
         activeJurisdiction,
         setActiveJurisdiction,

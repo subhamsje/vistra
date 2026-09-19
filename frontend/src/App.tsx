@@ -18,7 +18,7 @@ import { AuditTrailView } from './components/views/AuditTrailView';
 import { AnalysisView } from './components/views/AnalysisView';
 
 const MainLayout: React.FC = () => {
-  const { activeView } = useCadastre();
+  const { activeView, isPropertyPanelOpen, selectedEntity } = useCadastre();
 
   return (
     <div className="flex flex-col w-screen h-screen overflow-hidden bg-[#0b0f19] text-slate-100 select-none">
@@ -43,7 +43,7 @@ const MainLayout: React.FC = () => {
               </div>
 
               {/* Right Intelligence Property Inspector */}
-              <PropertyDetailsPanel />
+              {isPropertyPanelOpen && selectedEntity && <PropertyDetailsPanel />}
             </div>
           ) : activeView === 'ulpin_registry' ? (
             <RegistryView />
@@ -66,7 +66,7 @@ const MainLayout: React.FC = () => {
                 <LayerPanel />
                 <BasemapSwitcher />
               </div>
-              <PropertyDetailsPanel />
+              {isPropertyPanelOpen && selectedEntity && <PropertyDetailsPanel />}
             </div>
           )}
 

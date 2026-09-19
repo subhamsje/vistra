@@ -171,8 +171,23 @@ export const cadastreApi = {
     return await res.json();
   },
 
-  async getCesiumGeoJSON(explodeFactor = 0.0): Promise<any> {
-    const res = await fetch(`${API_BASE}/cesium-geojson?explode_factor=${explodeFactor}`);
+  async getCadastralTree(): Promise<any[]> {
+    try {
+      const res = await fetch(`${API_BASE}/cadastral-tree`);
+      if (!res.ok) throw new Error('Failed to fetch cadastral tree');
+      return await res.json();
+    } catch {
+      return [];
+    }
+  },
+
+  async getCesiumGeoJSON(explodeFactor = 0.0, buildingId = 'B12', selectedId = ''): Promise<any> {
+    const params = new URLSearchParams({
+      explode_factor: explodeFactor.toString(),
+      building_id: buildingId,
+      ...(selectedId ? { selected_id: selectedId } : {})
+    });
+    const res = await fetch(`${API_BASE}/cesium-geojson?${params.toString()}`);
     return await res.json();
   },
 

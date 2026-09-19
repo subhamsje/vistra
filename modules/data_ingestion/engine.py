@@ -35,7 +35,7 @@ class IngestionEngine:
             # Normalize to EPSG:4326 if needed
             geom_4326 = self.crs_processor.transform_geometry(geom, source_crs, "EPSG:4326")
             
-            p_id = str(props.get("id") or props.get("parcel_id") or f"PARCEL_{i+1}")
+            p_id = str(feat.get("id") or props.get("id") or props.get("parcel_id") or f"PARCEL_{i+1}")
             khasra = str(props.get("survey_khasra_no") or props.get("khasra") or props.get("survey_no") or f"{100+i}/A")
             
             base_elevation = float(props.get("base_elevation_m", 920.0))

@@ -192,14 +192,20 @@ def get_underground():
     return underground_data or {"type": "FeatureCollection", "features": []}
 
 @app.get("/api/cesium-geojson")
-def get_cesium_geojson(explode_factor: float = Query(0.0, ge=0.0, le=10.0)):
+def get_cesium_geojson(
+    explode_factor: float = Query(0.0, ge=0.0, le=10.0),
+    building_id: str = Query("B12"),
+    selected_id: Optional[str] = Query(None)
+):
     ds = cached_state["_cached_dataset"]
     return pipeline.visualizer.generate_cesium_payload(
         ds["parcels"],
         ds["buildings"],
         ds["floors"],
         ds["units"],
-        explode_factor=explode_factor
+        explode_factor=explode_factor,
+        selected_building_id=building_id,
+        selected_entity_id=selected_id or "B12_F3_U304"
     )
 
 # ----------------- ULPIN Registry & Entity Details ----------------- #
@@ -395,10 +401,54 @@ def get_entity_details(identifier: str):
             "thumbnail_url": "https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?auto=format&fit=crop&w=600&q=80"
         }
 
-    # 3. Fallback / Default Unit B12 Floor 3 Unit 04
+    # 3. Search in parcels
+    target_parcel = next((p for p in ds["parcels"] if p.get("id") == identifier or p.get("ulpin_3d") == identifier), None)
+    if target_parcel:
+        props = target_parcel.get("properties", {})
+        p_id = target_parcel.get("id", "P78")
+        z_min = props.get("base_elevation_m", 920.0)
+        z_max = props.get("max_elevation_m", 970.0)
+        h = z_max - z_min
+        area_sqm = props.get("registered_area_sqm", 2450.0)
+
+        return {
+            "entity_id": p_id,
+            "ulpin_3d": target_parcel.get("ulpin_3d", f"IN-KA-BLR-{p_id}"),
+            "entity_type": "PARCEL",
+            "type_label": "Cadastral Surface Parcel",
+            "category": props.get("land_use", "Urban Land"),
+            "validation_status": "Validated",
+            "parcel_id": p_id,
+            "building_id": None,
+            "floor_level": None,
+            "unit_number": None,
+            "area_sqft": round(area_sqm * 10.7639),
+            "area_sqm": area_sqm,
+            "vertical_extent": f"+0.0 m -> +{round(h, 1)} m",
+            "elevation_abs": f"{round(z_min, 1)} m -> {round(z_max, 1)} m",
+            "volume_m3": round(area_sqm * h, 1),
+            "geometry_confidence": 98,
+            "data_confidence": 97,
+            "validation_checklist": [
+                {"name": "Valid Geometry", "status": "PASS"},
+                {"name": "Parcel Match", "status": "PASS"},
+                {"name": "No Overlaps", "status": "PASS"},
+                {"name": "Unique ULPIN", "status": "PASS"},
+                {"name": "Valid Containment", "status": "PASS"},
+                {"name": "CRS Consistent", "status": "PASS"},
+                {"name": "Floor Sequence OK", "status": "PASS"}
+            ],
+            "data_sources": ["GIS Parcel Survey", "GNSS", "Drone Ortho", "DEM/DSM"],
+            "last_updated": "12 Mar 2024, 10:24 AM",
+            "version": "v1.2.0",
+            "audit_hash": target_parcel.get("audit_hash") or "0f19b401330cced7f9da9b288bd6c9b675053ce13b2dce5454a34ddb0ebf6c9a",
+            "thumbnail_url": "https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?auto=format&fit=crop&w=600&q=80"
+        }
+
+    # 4. Fallback / Default Unit B12 Floor 3 Unit 301
     return {
-        "entity_id": "B12_F3_U04",
-        "ulpin_3d": "IN-KA-BLR-P78-B12-F3-U04",
+        "entity_id": "B12_F3_U301",
+        "ulpin_3d": "IN-KA-BLR-P78-1A-BB12-F3-U301",
         "entity_type": "UNIT",
         "type_label": "Apartment / Unit",
         "category": "Residential",

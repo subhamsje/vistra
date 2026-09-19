@@ -5,6 +5,16 @@ export interface ValidationItem {
   status: 'PASS' | 'WARNING' | 'ERROR';
 }
 
+export interface EvidenceSourceDetail {
+  source_name: string;
+  category: string;
+  status: 'USED' | 'UNAVAILABLE' | 'OPTIONAL';
+  timestamp: string;
+  dataset_id: string;
+  confidence: number;
+  contribution: string;
+}
+
 export interface EntityDetails {
   entity_id: string;
   ulpin_3d: string;
@@ -25,6 +35,7 @@ export interface EntityDetails {
   data_confidence: number;
   validation_checklist: ValidationItem[];
   data_sources: string[];
+  evidence_breakdown?: EvidenceSourceDetail[];
   last_updated: string;
   version: string;
   audit_hash: string;
@@ -102,6 +113,7 @@ export interface ReviewQueueItem {
   source: string;
   suggested_action: string;
   flagged_at: string;
+  coordinates?: [number, number];
 }
 
 export interface AuditRecord {
@@ -131,3 +143,5 @@ export interface LayerVisibilityState {
 export type BasemapMode = 'satellite' | 'streets' | 'terrain' | 'lidar' | 'night' | 'master_plan';
 export type ToolMode = 'select' | 'measure' | 'section' | 'explode' | 'compare' | 'layers' | 'dim' | 'basemap';
 export type NavView = '3d_cadastre' | 'overview' | 'parcels' | 'buildings' | 'floors_units' | 'underground' | 'ulpin_registry' | 'analysis' | 'validation' | 'review_queue' | 'data_sources' | 'audit_trail' | 'settings';
+export type CadastralViewMode = 'REALITY' | 'ANALYSIS';
+export type CameraViewMode = 'CITY' | 'PARCEL' | 'BUILDING' | 'FLOOR' | 'UNIT' | 'TOP_DOWN' | 'ORBIT';

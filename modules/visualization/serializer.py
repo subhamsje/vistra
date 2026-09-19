@@ -107,16 +107,17 @@ class Visualization3DSerializer:
             }
         }
 
-    def generate_cesium_payload(self, parcels: List[Dict[str, Any]], buildings: List[Dict[str, Any]], floors: List[Dict[str, Any]], units: List[Dict[str, Any]], explode_factor: float = 0.0) -> Dict[str, Any]:
+    def generate_cesium_payload(self, parcels: List[Dict[str, Any]], buildings: List[Dict[str, Any]], floors: List[Dict[str, Any]], units: List[Dict[str, Any]], explode_factor: float = 0.0, selected_building_id: str = "B12", selected_entity_id: str = "B12_F3_U304") -> Dict[str, Any]:
         """
         Generates enriched GeoJSON/3D visualization objects ready for CesiumJS and Three.js.
         Calculates local ground relative elevations so geometry sits solidly on terrain,
         plus absolute AMSL heights for cadastral inspection.
+        Dynamically supports multi-building floor explosion, unit selection, and transparent context buildings.
         """
         features = []
         ground_datum = 920.0
 
-        # 1. Parcels (Cadastral ground demarcation)
+        # 1. Parcels (Cadastral ground demarcation - Thin crisp boundary)
         for p in parcels:
             props = dict(p.get("properties", {}))
             props["id"] = p["id"]
@@ -124,7 +125,7 @@ class Visualization3DSerializer:
             props["entity_type"] = "PARCEL"
             props["color"] = "#22c55e" # Emerald green cadastral boundary
             props["local_base_m"] = 0.0
-            props["local_roof_m"] = 0.3
+            props["local_roof_m"] = 0.25
             props["amsl_base_m"] = props.get("base_elevation_m", ground_datum)
             features.append({
                 "type": "Feature",
@@ -133,11 +134,14 @@ class Visualization3DSerializer:
                 "properties": props
             })
 
-        # 2. Surrounding Buildings (B11, B13) as subtle architectural context
+        # Ensure selected_building_id defaults sanely
+        active_b_id = selected_building_id if any(b["id"] == selected_building_id for b in buildings) else "B12"
+
+        # 2. Buildings (Context buildings are semi-transparent solids; Selected building is segmented into floors)
         for b in buildings:
             b_id = b["id"]
-            if b_id == "B12":
-                continue # B12 is exploded into individual floors/units below
+            if b_id == active_b_id:
+                continue # The selected building is exploded into individual storeys and units below
             
             b_props = dict(b.get("properties", {}))
             height = float(b_props.get("height_m", 15.0))
@@ -163,15 +167,14 @@ class Visualization3DSerializer:
                 }
             })
 
-        # 3. Units & Floors for Hero Building B12
-        for un in units:
+        # 3. Units & Storeys for Selected Building
+        active_units = [u for u in units if any(f["id"] == u.get("floor_id") and f.get("building_id") == active_b_id for f in floors)]
+
+        for un in active_units:
             fl_id = un.get("floor_id")
             fl = next((f for f in floors if f["id"] == fl_id), None)
             fl_lvl = fl.get("floor_level", 1) if fl else 1
-            b_id = fl.get("building_id") if fl else "B12"
-
-            if b_id != "B12":
-                continue # B11 and B13 are rendered above as contextual monolithic buildings
+            b_id = fl.get("building_id") if fl else active_b_id
 
             amsl_min = un.get("z_bounds", [920.0, 923.0])[0]
             amsl_max = un.get("z_bounds", [920.0, 923.0])[1]
@@ -181,13 +184,15 @@ class Visualization3DSerializer:
             if fl and fl.get("is_basement"):
                 local_min = -3.0
                 local_max = 0.0
+                disp_lvl = 0
             else:
                 local_min = max(0.0, amsl_min - ground_datum)
                 local_max = local_min + unit_h
+                disp_lvl = fl_lvl
 
             # Apply vertical floor explosion displacement
-            exploded_base = local_min + (fl_lvl * explode_factor)
-            exploded_roof = local_max + (fl_lvl * explode_factor)
+            exploded_base = local_min + (disp_lvl * explode_factor)
+            exploded_roof = local_max + (disp_lvl * explode_factor)
 
             # Vibrant floor palette matching reference screenshot (Yellow -> Green -> Cyan -> Blue -> Purple)
             if fl and fl.get("is_basement"):
@@ -202,8 +207,10 @@ class Visualization3DSerializer:
                 color = "#3b82f6" # Royal Blue
             elif fl_lvl == 5:
                 color = "#a855f7" # Vibrant Purple
+            elif fl_lvl == 6:
+                color = "#ec4899" # Pink penthouse / terrace
             else:
-                color = "#ec4899" # Pink penthouse
+                color = "#f43f5e" # Rose
 
             props = {
                 "id": un["id"],
