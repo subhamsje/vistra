@@ -145,3 +145,31 @@ export type ToolMode = 'select' | 'measure' | 'section' | 'explode' | 'compare' 
 export type NavView = '3d_cadastre' | 'overview' | 'parcels' | 'buildings' | 'floors_units' | 'underground' | 'ulpin_registry' | 'analysis' | 'validation' | 'review_queue' | 'data_sources' | 'audit_trail' | 'settings';
 export type CadastralViewMode = 'REALITY' | 'ANALYSIS';
 export type CameraViewMode = 'CITY' | 'PARCEL' | 'BUILDING' | 'FLOOR' | 'UNIT' | 'TOP_DOWN' | 'ORBIT';
+
+export interface ValidationIssue {
+  id: string;
+  type: 'OVERLAP' | 'GAP' | 'INVALID_CONTAINMENT' | 'SELF_INTERSECTION' | 'CRS_MISMATCH' | 'FLOOR_ORDERING' | 'PARCEL_BUILDING_MISMATCH';
+  severity: 'ERROR' | 'WARNING' | 'INFO';
+  title: string;
+  description: string;
+  entity_id: string;
+  entity_type: EntityType;
+  coordinates: [number, number];
+  z_bounds: [number, number];
+  affected_entities: string[];
+  suggested_action: string;
+  detected_at: string;
+  status: 'OPEN' | 'ACKNOWLEDGED' | 'RESOLVED' | 'DISMISSED';
+}
+
+export interface ExplodedFloor {
+  floor_level: number;
+  label: string;
+  height: number;
+  base_elevation: number;
+  roof_elevation: number;
+  unit_count: number;
+  offset: number;
+  is_basement: boolean;
+  is_roof: boolean;
+}

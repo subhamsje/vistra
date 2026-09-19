@@ -27,6 +27,11 @@ from database.manager import DatabaseManager
 from ml.fusion_engine import EvidenceFusionEngine
 from ulpin.authority import ULPIN3DAuthority
 
+import geopandas as gpd
+from shapely.geometry import shape, Polygon, MultiPolygon
+from backend.database.connection import check_db_connection, get_db_engine, get_db_session, DATABASE_URL
+from backend.database.models import Base, BuildingModel, Property3DPIDModel
+
 app = FastAPI(
     title="VISTRA: 3D ULPIN Generation & Vertical Property Mapping System",
     version="2.0.0",
@@ -76,18 +81,47 @@ def init_startup_dataset():
         with open(underground_file) as f:
             underground_data = json.load(f)
 
+    # Initialize PostGIS schema tables if database is available
+    is_db_ok, _ = check_db_connection()
+    if is_db_ok:
+        try:
+            pg_engine = get_db_engine()
+            Base.metadata.create_all(bind=pg_engine)
+        except Exception as e:
+            print(f"Warning: PostGIS table auto-create: {e}")
+
 init_startup_dataset()
 
 # ----------------- System & User Endpoints ----------------- #
 
+@app.get("/health")
+def root_health():
+    """
+    Health check endpoint including PostGIS database connection status.
+    Directly satisfies SIH26011 test specification.
+    """
+    is_db_ok, db_msg = check_db_connection()
+    return {
+        "status": "ok",
+        "database": {
+            "connected": is_db_ok,
+            "message": db_msg
+        }
+    }
+
 @app.get("/api/health")
 def health():
+    is_db_ok, db_msg = check_db_connection()
     return {
         "status": "ONLINE",
         "service": "VISTRA 3D Cadastre Core",
         "version": "2.0.0",
         "active_parcels": cached_state["parcels_count"] if cached_state else 0,
-        "active_units": cached_state["units_count"] if cached_state else 0
+        "active_units": cached_state["units_count"] if cached_state else 0,
+        "postgis": {
+            "connected": is_db_ok,
+            "message": db_msg
+        }
     }
 
 @app.get("/api/user")
@@ -580,6 +614,171 @@ def get_review_queue():
             "flagged_at": "12 Mar 2024, 10:20 AM"
         }
     ]
+
+# ----------------- PostGIS Building & 3D-PID Spatial Endpoints ----------------- #
+
+@app.get("/api/buildings")
+async def get_buildings_file():
+    """
+    Get 3D-ready building features as GeoJSON (file-based).
+    Compatible with friend's SIH26011 specification.
+    """
+    buildings_path = os.path.join(os.path.dirname(__file__), "..", "data", "processed", "buildings_3d.geojson")
+    if not os.path.exists(buildings_path):
+        buildings_path = os.path.join(os.path.dirname(__file__), "..", "data", "synthetic", "buildings.geojson")
+    
+    if not os.path.exists(buildings_path):
+        raise HTTPException(status_code=404, detail="Buildings data not found. Run GIS processing first.")
+    
+    with open(buildings_path, "r", encoding="utf-8") as f:
+        geojson_data = json.load(f)
+    return geojson_data
+
+
+@app.get("/api/buildings/db")
+async def get_buildings_from_postgis():
+    """
+    Get 3D-ready building features directly from PostGIS spatial database as GeoJSON.
+    """
+    is_db_ok, db_msg = check_db_connection()
+    if not is_db_ok:
+        raise HTTPException(
+            status_code=503,
+            detail=f"PostGIS database unavailable: {db_msg}"
+        )
+    
+    try:
+        engine = get_db_engine()
+        gdf = gpd.read_postgis(
+            "SELECT id, building_id, height_m, floors, base_height, extruded_height, provenance, confidence, class_id, class_name, geometry FROM buildings",
+            con=engine,
+            geom_col="geometry"
+        )
+        geojson_str = gdf.to_json()
+        return json.loads(geojson_str)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to query PostGIS buildings table: {str(e)}"
+        )
+
+
+@app.get("/api/properties-3d-pid")
+def get_all_3d_pids(building_id: Optional[str] = None):
+    """
+    Retrieve all registered 3D property volumes and prototype identifiers from PostGIS.
+    Explicitly labelled with 'is_prototype': True and 'prototype_label': 'PROTOTYPE_3D_PID'.
+    """
+    is_db_ok, db_msg = check_db_connection()
+    if not is_db_ok:
+        raise HTTPException(status_code=503, detail=f"PostGIS unavailable: {db_msg}")
+
+    try:
+        engine = get_db_engine()
+        query = "SELECT id, prototype_pid, prototype_label, is_prototype, building_id, floor_level, unit_number, unit_type, z_min, z_max, height_m, volume_m3, area_sqm, audit_hash, rrr_data, geometry FROM properties_3d_pid"
+        if building_id:
+            query += f" WHERE building_id = '{building_id}'"
+        
+        gdf = gpd.read_postgis(query, con=engine, geom_col="geometry")
+        return json.loads(gdf.to_json())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to query properties_3d_pid: {str(e)}")
+
+
+@app.post("/api/generate-3d-pid")
+def generate_3d_pid_endpoint(payload: Dict[str, Any] = Body(...)):
+    """
+    Generates and registers a PROTOTYPE_3D_PID into PostGIS.
+    
+    IMPORTANT LEGAL / CADASTRE NOTICE:
+    This generated identifier is an experimental, research-grade 'PROTOTYPE_3D_PID'.
+    It is NOT an official government-issued 3D ULPIN.
+    """
+    building_id = payload.get("building_id", "B12")
+    floor_level = int(payload.get("floor_level", 1))
+    unit_number = str(payload.get("unit_number", "U101"))
+    unit_type = payload.get("unit_type", "RESIDENTIAL_APARTMENT")
+    z_min = float(payload.get("z_min", 920.0 + (floor_level - 1) * 3.0))
+    z_max = float(payload.get("z_max", z_min + 3.0))
+    height_m = round(z_max - z_min, 2)
+    area_sqm = float(payload.get("area_sqm", 119.3))
+    volume_m3 = round(area_sqm * height_m, 2)
+    
+    # Generate deterministic prototype PID string
+    fl_code = f"B{abs(floor_level)}" if floor_level < 0 else f"F{floor_level}"
+    clean_unit = unit_number.replace(" ", "").upper()
+    proto_pid = f"PROTOTYPE_3D_PID-KA-BLR-{building_id}-{fl_code}-{clean_unit}"
+    
+    # Default unit polygon geometry if not provided
+    coords = payload.get("coordinates") or [
+        [77.6248, 12.9353],
+        [77.62515, 12.9353],
+        [77.62515, 12.9358],
+        [77.6248, 12.9358],
+        [77.6248, 12.9353]
+    ]
+    poly_geom = Polygon(coords)
+
+    # Compute cryptographic audit hash
+    import hashlib
+    hash_payload = f"{proto_pid}_{z_min}_{z_max}_{area_sqm}_{volume_m3}"
+    audit_hash = hashlib.sha256(hash_payload.encode("utf-8")).hexdigest()
+
+    is_db_ok, db_msg = check_db_connection()
+    if is_db_ok:
+        try:
+            session = get_db_session()
+            existing = session.query(Property3DPIDModel).filter_by(prototype_pid=proto_pid).first()
+            if existing:
+                existing.z_min = z_min
+                existing.z_max = z_max
+                existing.height_m = height_m
+                existing.volume_m3 = volume_m3
+                existing.area_sqm = area_sqm
+                existing.audit_hash = audit_hash
+            else:
+                record = Property3DPIDModel(
+                    prototype_pid=proto_pid,
+                    building_id=building_id,
+                    floor_level=floor_level,
+                    unit_number=unit_number,
+                    unit_type=unit_type,
+                    z_min=z_min,
+                    z_max=z_max,
+                    height_m=height_m,
+                    volume_m3=volume_m3,
+                    area_sqm=area_sqm,
+                    geometry=f"SRID=4326;{poly_geom.wkt}",
+                    is_prototype=True,
+                    prototype_label="PROTOTYPE_3D_PID",
+                    audit_hash=audit_hash,
+                    rrr_data={
+                        "tenure_type": "FREEHOLD",
+                        "notice": "EXPERIMENTAL PROTOTYPE - NOT AN OFFICIAL GOVT ULPIN"
+                    }
+                )
+                session.add(record)
+            session.commit()
+            session.close()
+        except Exception as e:
+            print(f"Warning: Failed to save prototype PID to PostGIS: {e}")
+
+    return {
+        "success": True,
+        "prototype_pid": proto_pid,
+        "prototype_label": "PROTOTYPE_3D_PID",
+        "is_prototype": True,
+        "disclaimer": "This generated ID is an experimental PROTOTYPE_3D_PID and is NOT an official government 3D ULPIN.",
+        "building_id": building_id,
+        "floor_level": floor_level,
+        "unit_number": unit_number,
+        "unit_type": unit_type,
+        "z_bounds": [z_min, z_max],
+        "height_m": height_m,
+        "area_sqm": area_sqm,
+        "volume_m3": volume_m3,
+        "audit_hash": audit_hash
+    }
 
 # ----------------- Web UI Serving ----------------- #
 

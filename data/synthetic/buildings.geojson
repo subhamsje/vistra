@@ -1,0 +1,68 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [77.2090, 28.6139],
+            [77.2090, 28.6145],
+            [77.2100, 28.6145],
+            [77.2100, 28.6139],
+            [77.2090, 28.6139]
+          ]
+        ]
+      },
+      "properties": {
+        "building_id": "BLD001",
+        "height_m": 15.5,
+        "floors": 4,
+        "provenance": "SYNTHETIC"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [77.2105, 28.6140],
+            [77.2105, 28.6148],
+            [77.2118, 28.6148],
+            [77.2118, 28.6140],
+            [77.2105, 28.6140]
+          ]
+        ]
+      },
+      "properties": {
+        "building_id": "BLD002",
+        "height_m": 22.0,
+        "floors": 6,
+        "provenance": "SYNTHETIC"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [77.2120, 28.6135],
+            [77.2120, 28.6142],
+            [77.2130, 28.6142],
+            [77.2130, 28.6135],
+            [77.2120, 28.6135]
+          ]
+        ]
+      },
+      "properties": {
+        "building_id": "BLD003",
+        "height_m": 12.0,
+        "floors": 3,
+        "provenance": "SYNTHETIC"
+      }
+    }
+  ]
+}

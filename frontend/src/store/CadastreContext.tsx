@@ -9,7 +9,10 @@ import {
   ToolMode, 
   NavView,
   CadastralViewMode,
-  CameraViewMode
+  CameraViewMode,
+  ValidationIssue,
+  ExplodedFloor,
+  DataSourceItem
 } from '../types/cadastre';
 import { cadastreApi } from '../services/api';
 
@@ -22,6 +25,8 @@ interface CadastreContextType {
   setSelectedBuildingId: (bId: string) => void;
   isPropertyPanelOpen: boolean;
   setIsPropertyPanelOpen: (open: boolean) => void;
+  isPropertyPanelMinimized: boolean;
+  setIsPropertyPanelMinimized: (minimized: boolean) => void;
   viewMode: CadastralViewMode;
   setViewMode: (mode: CadastralViewMode) => void;
   cameraMode: CameraViewMode;
@@ -48,6 +53,20 @@ interface CadastreContextType {
   flyToTarget: [number, number] | null;
   triggerFlyTo: (coords: [number, number]) => void;
   refreshData: () => Promise<void>;
+  validationIssues: ValidationIssue[];
+  setValidationIssues: (issues: ValidationIssue[]) => void;
+  activeValidationIssue: ValidationIssue | null;
+  setActiveValidationIssue: (issue: ValidationIssue | null) => void;
+  evidenceSources: DataSourceItem[];
+  setEvidenceSources: (sources: DataSourceItem[]) => void;
+  isEvidenceDrawerOpen: boolean;
+  setIsEvidenceDrawerOpen: (open: boolean) => void;
+  isValidationPanelOpen: boolean;
+  setIsValidationPanelOpen: (open: boolean) => void;
+  explodedBuildingId: string | null;
+  setExplodedBuildingId: (id: string | null) => void;
+  explodedFloors: Map<number, ExplodedFloor>;
+  setExplodedFloors: (floors: Map<number, ExplodedFloor>) => void;
 }
 
 const defaultLayers: LayerVisibilityState = {
@@ -69,9 +88,10 @@ export const CadastreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [activeView, setActiveView] = useState<NavView>('3d_cadastre');
   const [selectedEntity, setSelectedEntity] = useState<EntityDetails | null>(null);
   const [selectedBuildingId, setSelectedBuildingId] = useState<string>('B12');
-  const [isPropertyPanelOpen, setIsPropertyPanelOpen] = useState<boolean>(true);
+  const [isPropertyPanelOpen, setIsPropertyPanelOpen] = useState<boolean>(false);
+  const [isPropertyPanelMinimized, setIsPropertyPanelMinimized] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<CadastralViewMode>('REALITY');
-  const [cameraMode, setCameraMode] = useState<CameraViewMode>('BUILDING');
+  const [cameraMode, setCameraMode] = useState<CameraViewMode>('CITY');
   const [jurisdictions, setJurisdictions] = useState<Jurisdiction[]>([]);
   const [activeJurisdiction, setActiveJurisdiction] = useState<Jurisdiction | null>(null);
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -85,6 +105,13 @@ export const CadastreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [isLayersPanelOpen, setIsLayersPanelOpen] = useState<boolean>(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
   const [flyToTarget, setFlyToTarget] = useState<[number, number] | null>(null);
+  const [validationIssues, setValidationIssues] = useState<ValidationIssue[]>([]);
+  const [activeValidationIssue, setActiveValidationIssue] = useState<ValidationIssue | null>(null);
+  const [evidenceSources, setEvidenceSources] = useState<DataSourceItem[]>([]);
+  const [isEvidenceDrawerOpen, setIsEvidenceDrawerOpen] = useState<boolean>(false);
+  const [isValidationPanelOpen, setIsValidationPanelOpen] = useState<boolean>(false);
+  const [explodedBuildingId, setExplodedBuildingId] = useState<string | null>(null);
+  const [explodedFloors, setExplodedFloors] = useState<Map<number, ExplodedFloor>>(new Map());
 
   const loadInitialData = async () => {
     try {
@@ -157,6 +184,8 @@ export const CadastreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setSelectedBuildingId,
         isPropertyPanelOpen,
         setIsPropertyPanelOpen,
+        isPropertyPanelMinimized,
+        setIsPropertyPanelMinimized,
         viewMode,
         setViewMode,
         cameraMode,
@@ -182,7 +211,21 @@ export const CadastreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setIsCommandPaletteOpen,
         flyToTarget,
         triggerFlyTo,
-        refreshData: loadInitialData
+        refreshData: loadInitialData,
+        validationIssues,
+        setValidationIssues,
+        activeValidationIssue,
+        setActiveValidationIssue,
+        evidenceSources,
+        setEvidenceSources,
+        isEvidenceDrawerOpen,
+        setIsEvidenceDrawerOpen,
+        isValidationPanelOpen,
+        setIsValidationPanelOpen,
+        explodedBuildingId,
+        setExplodedBuildingId,
+        explodedFloors,
+        setExplodedFloors
       }}
     >
       {children}

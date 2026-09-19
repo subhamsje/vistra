@@ -1,8 +1,40 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useCadastre } from '../../store/CadastreContext';
 import { cadastreApi } from '../../services/api';
+import { EntityType } from '../../types/cadastre';
 
 declare const Cesium: any;
+
+interface BoundingBox {
+  min: [number, number, number];
+  max: [number, number, number];
+}
+
+interface CameraMode {
+  name: string;
+  heading: number;
+  pitch: number;
+  rangeFactor: number;
+}
+
+const CAMERA_MODES: Record<string, CameraMode> = {
+  city: { name: 'CITY VIEW', heading: 35, pitch: -28, rangeFactor: 1.0 },
+  parcel: { name: 'PARCEL VIEW', heading: 45, pitch: -35, rangeFactor: 0.5 },
+  building: { name: 'BUILDING VIEW', heading: 35, pitch: -30, rangeFactor: 0.3 },
+  floor: { name: 'FLOOR VIEW', heading: 0, pitch: -60, rangeFactor: 0.15 },
+  unit: { name: 'UNIT VIEW', heading: 0, pitch: -75, rangeFactor: 0.08 },
+};
+
+const ENTITY_COLORS: Record<EntityType, { fill: string; outline: string }> = {
+  PARCEL: { fill: '#22c55e', outline: '#16a34a' },
+  BUILDING: { fill: '#3b82f6', outline: '#2563eb' },
+  FLOOR: { fill: '#06b6d4', outline: '#0891b2' },
+  UNIT: { fill: '#a855f7', outline: '#9333ea' },
+  UNDERGROUND: { fill: '#ec4899', outline: '#db2777' },
+  COMMON_AREA: { fill: '#f59e0b', outline: '#d97706' },
+};
+
+const CONTEXT_BUILDING_COLOR = { fill: '#475569', outline: '#334155' };
 
 export const CesiumViewer: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -10,9 +42,14 @@ export const CesiumViewer: React.FC = () => {
   const dataSourceRef = useRef<any>(null);
   const roadsSourceRef = useRef<any>(null);
   const undergroundSourceRef = useRef<any>(null);
+  const validationSourceRef = useRef<any>(null);
+  const selectionIndicatorRef = useRef<any>(null);
 
   const [imageryLoaded, setImageryLoaded] = useState(true);
   const [loading3D, setLoading3D] = useState(true);
+  const [currentCameraMode, setCurrentCameraMode] = useState<'city' | 'parcel' | 'building' | 'floor' | 'unit'>('city');
+  const [viewMode, setViewMode] = useState<'reality' | 'analysis'>('reality');
+  const [entityBoundingBoxes, setEntityBoundingBoxes] = useRef<Map<string, BoundingBox>>(new Map());
 
   const { 
     layers, 
@@ -21,15 +58,126 @@ export const CesiumViewer: React.FC = () => {
     basemap, 
     selectedEntity,
     setSelectedEntityId,
-    selectedBuildingId,
-    setSelectedBuildingId,
-    viewMode,
-    cameraMode,
     activeJurisdiction,
-    flyToTarget
+    flyToTarget,
+    setFlyToTarget,
+    activeView
   } = useCadastre();
 
-  // 1. Initialize Cesium Viewer with Open Imagery (No Black Screen)
+  const calculateBoundingBox = useCallback((entity: any): BoundingBox | null => {
+    if (!entity.polygon || !entity.polygon.hierarchy) return null;
+    
+    const positions = entity.polygon.hierarchy.getValue ? entity.polygon.hierarchy.getValue() : entity.polygon.hierarchy;
+    if (!positions) return null;
+
+    let minLon = Infinity, minLat = Infinity, minHeight = Infinity;
+    let maxLon = -Infinity, maxLat = -Infinity, maxHeight = -Infinity;
+
+    const processPositions = (pos: any) => {
+      if (Array.isArray(pos)) {
+        pos.forEach(p => {
+          const cart = Cesium.Cartographic.fromCartesian(p);
+          const lon = Cesium.Math.toDegrees(cart.longitude);
+          const lat = Cesium.Math.toDegrees(cart.latitude);
+          const height = cart.height;
+          minLon = Math.min(minLon, lon);
+          maxLon = Math.max(maxLon, lon);
+          minLat = Math.min(minLat, lat);
+          maxLat = Math.max(maxLat, lat);
+          minHeight = Math.min(minHeight, height);
+          maxHeight = Math.max(maxHeight, height);
+        });
+      }
+    };
+
+    if (positions.positions) {
+      processPositions(positions.positions);
+    } else if (Array.isArray(positions)) {
+      processPositions(positions);
+    }
+
+    if (minLon === Infinity) return null;
+
+    return {
+      min: [minLon, minLat, minHeight],
+      max: [maxLon, maxLat, maxHeight]
+    };
+  }, []);
+
+  const computeBoundingSphere = useCallback((bbox: BoundingBox) => {
+    const centerLon = (bbox.min[0] + bbox.max[0]) / 2;
+    const centerLat = (bbox.min[1] + bbox.max[1]) / 2;
+    const centerHeight = (bbox.min[2] + bbox.max[2]) / 2;
+    
+    const center = Cesium.Cartesian3.fromDegrees(centerLon, centerLat, centerHeight);
+    
+    const corners = [
+      [bbox.min[0], bbox.min[1], bbox.min[2]],
+      [bbox.min[0], bbox.min[1], bbox.max[2]],
+      [bbox.min[0], bbox.max[1], bbox.min[2]],
+      [bbox.min[0], bbox.max[1], bbox.max[2]],
+      [bbox.max[0], bbox.min[1], bbox.min[2]],
+      [bbox.max[0], bbox.min[1], bbox.max[2]],
+      [bbox.max[0], bbox.max[1], bbox.min[2]],
+      [bbox.max[0], bbox.max[1], bbox.max[2]],
+    ];
+    
+    let maxDist = 0;
+    corners.forEach(corner => {
+      const cornerCart = Cesium.Cartesian3.fromDegrees(corner[0], corner[1], corner[2]);
+      const dist = Cesium.Cartesian3.distance(center, cornerCart);
+      maxDist = Math.max(maxDist, dist);
+    });
+    
+    return new Cesium.BoundingSphere(center, maxDist * 1.2);
+  }, []);
+
+  const flyToEntity = useCallback((entityId: string, mode: keyof typeof CAMERA_MODES = 'building') => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+
+    const bbox = entityBoundingBoxes.current.get(entityId);
+    if (!bbox) return;
+
+    const cameraMode = CAMERA_MODES[mode];
+    const boundingSphere = computeBoundingSphere(bbox);
+    const range = boundingSphere.radius * cameraMode.rangeFactor * 2;
+
+    viewer.camera.flyToBoundingSphere(boundingSphere, {
+      offset: new Cesium.HeadingPitchRange(
+        Cesium.Math.toRadians(cameraMode.heading),
+        Cesium.Math.toRadians(cameraMode.pitch),
+        range
+      ),
+      duration: 1.2,
+      complete: () => {
+        setCurrentCameraMode(mode);
+      }
+    });
+  }, [computeBoundingSphere]);
+
+  const flyToValidationIssue = useCallback((issueId: string) => {
+    const viewer = viewerRef.current;
+    if (!viewer || !validationSourceRef.current) return;
+
+    const entity = validationSourceRef.current.entities.getById(issueId);
+    if (!entity) return;
+
+    const bbox = calculateBoundingBox(entity);
+    if (!bbox) return;
+
+    const boundingSphere = computeBoundingSphere(bbox);
+    
+    viewer.camera.flyToBoundingSphere(boundingSphere, {
+      offset: new Cesium.HeadingPitchRange(
+        Cesium.Math.toRadians(45),
+        Cesium.Math.toRadians(-45),
+        boundingSphere.radius * 3
+      ),
+      duration: 1.5
+    });
+  }, [calculateBoundingBox, computeBoundingSphere]);
+
   useEffect(() => {
     if (!containerRef.current || viewerRef.current) return;
 
@@ -40,7 +188,6 @@ export const CesiumViewer: React.FC = () => {
 
     Cesium.Ion.defaultAccessToken = '';
 
-    // High quality imagery provider fallback - Esri World Imagery (Satellite)
     const imageryProvider = new Cesium.UrlTemplateImageryProvider({
       url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
       maximumLevel: 19,
@@ -60,41 +207,78 @@ export const CesiumViewer: React.FC = () => {
       fullscreenButton: false,
       infoBox: false,
       selectionIndicator: false,
+      orderIndependentTranslucency: true,
+      contextOptions: {
+        webgl: {
+          alpha: true,
+          preserveDrawingBuffer: true
+        }
+      }
     });
 
-    viewer.scene.globe.depthTestAgainstTerrain = false;
-    viewer.scene.globe.enableLighting = false;
+    viewer.scene.globe.depthTestAgainstTerrain = true;
+    viewer.scene.globe.enableLighting = true;
     viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#0b0f19');
+    viewer.scene.sun.show = true;
+    viewer.scene.moon.show = false;
+    viewer.scene.skyAtmosphere.show = true;
+    viewer.scene.skyAtmosphere.hueShift = -0.1;
+    viewer.scene.skyAtmosphere.saturationShift = -0.2;
+    viewer.scene.skyAtmosphere.brightnessShift = -0.3;
+    viewer.scene.fog.enabled = true;
+    viewer.scene.fog.density = 0.0003;
+    viewer.scene.fog.minimumBrightness = 0.1;
+    viewer.scene.fog.screenSpaceErrorFactor = 1.0;
 
-    // Default framing for Koramangala P78 / B12
-    const targetLon = activeJurisdiction?.center[0] || 77.62515;
-    const targetLat = activeJurisdiction?.center[1] || 12.9358;
-    const targetCenter = Cesium.Cartesian3.fromDegrees(targetLon, targetLat, 10.0);
+    viewer.shadows = true;
+    viewer.shadowMap.enabled = true;
+    viewer.shadowMap.softShadows = true;
+    viewer.shadowMap.darkness = 0.4;
+    viewer.shadowMap.maximumDistance = 50000;
 
-    viewer.camera.flyToBoundingSphere(
-      new Cesium.BoundingSphere(targetCenter, 85),
-      {
-        offset: new Cesium.HeadingPitchRange(
-          Cesium.Math.toRadians(35),
-          Cesium.Math.toRadians(-28),
-          200
-        ),
-        duration: 1.2,
-      }
-    );
+    if (activeJurisdiction) {
+      const targetCenter = Cesium.Cartesian3.fromDegrees(
+        activeJurisdiction.center[0], 
+        activeJurisdiction.center[1], 
+        activeJurisdiction.elevation_m || 10.0
+      );
 
-    // Entity Selection Click Handler
+      viewer.camera.flyToBoundingSphere(
+        new Cesium.BoundingSphere(targetCenter, 500),
+        {
+          offset: new Cesium.HeadingPitchRange(
+            Cesium.Math.toRadians(35),
+            Cesium.Math.toRadians(-28),
+            1200
+          ),
+          duration: 1.5,
+        }
+      );
+    }
+
     const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+    
     handler.setInputAction((movement: any) => {
       const picked = viewer.scene.pick(movement.position);
       if (Cesium.defined(picked) && picked.id && picked.id.properties) {
         const props = picked.id.properties;
-        const eId = props.id ? props.id.getValue() : (picked.id.id || 'B12_F3_U304');
-        const bId = props.building_id ? props.building_id.getValue() : (picked.id.id?.startsWith('B') ? picked.id.id.split('_')[0] : 'B12');
-        if (bId) setSelectedBuildingId(bId);
-        setSelectedEntityId(eId);
+        const eId = props.id ? props.id.getValue() : (picked.id.id || '');
+        if (eId) {
+          setSelectedEntityId(eId);
+        }
       }
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+    handler.setInputAction((movement: any) => {
+      const picked = viewer.scene.pick(movement.endPosition);
+      if (Cesium.defined(picked) && picked.id && picked.id.properties) {
+        const props = picked.id.properties;
+        const eId = props.id ? props.id.getValue() : (picked.id.id || '');
+        if (eId && selectionIndicatorRef.current) {
+          selectionIndicatorRef.current.showSelection(eId);
+        }
+      }
+    }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
     viewerRef.current = viewer;
 
@@ -104,22 +288,14 @@ export const CesiumViewer: React.FC = () => {
         viewerRef.current = null;
       }
     };
-  }, []);
+  }, [activeJurisdiction, setSelectedEntityId]);
 
-  // 2. Basemap Switcher Support & Reality / Analysis View Balance
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
 
     let newProvider;
-    if (viewMode === 'ANALYSIS') {
-      // In Analysis View, use a minimalist high-contrast slate dark basemap so 3D geometry pops
-      newProvider = new Cesium.UrlTemplateImageryProvider({
-        url: 'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
-        subdomains: ['a', 'b', 'c', 'd'],
-        maximumLevel: 19
-      });
-    } else if (basemap === 'streets') {
+    if (basemap === 'streets') {
       newProvider = new Cesium.UrlTemplateImageryProvider({
         url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
         maximumLevel: 19
@@ -135,8 +311,12 @@ export const CesiumViewer: React.FC = () => {
         url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
         maximumLevel: 19
       });
+    } else if (basemap === 'master_plan') {
+      newProvider = new Cesium.UrlTemplateImageryProvider({
+        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+        maximumLevel: 19
+      });
     } else {
-      // Default satellite (Reality View)
       newProvider = new Cesium.UrlTemplateImageryProvider({
         url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
         maximumLevel: 19
@@ -145,19 +325,145 @@ export const CesiumViewer: React.FC = () => {
 
     try {
       viewer.imageryLayers.removeAll();
-      const layer = viewer.imageryLayers.addImageryProvider(newProvider);
-      // In analysis mode, soften imagery saturation/alpha so cadastral lines are crystal clear
-      if (viewMode === 'ANALYSIS') {
-        layer.alpha = 0.8;
-      } else {
-        layer.alpha = 1.0;
+      viewer.imageryLayers.addImageryProvider(newProvider);
+      
+      if (viewMode === 'analysis') {
+        const analysisLayer = viewer.imageryLayers.addImageryProvider(newProvider);
+        analysisLayer.alpha = 0.3;
+        analysisLayer.brightness = 1.2;
+        analysisLayer.contrast = 1.3;
+        analysisLayer.saturation = 0.3;
+        analysisLayer.gamma = 1.1;
       }
     } catch (e) {
       console.warn('Could not switch basemap', e);
     }
   }, [basemap, viewMode]);
 
-  // 3. Load & Render 3D Cadastral Geometry (Buildings, Floors, Parcels)
+  const applyEntityStyling = useCallback((
+    entity: any, 
+    props: any, 
+    eType: EntityType, 
+    eId: string, 
+    flLvl: number,
+    isContext: boolean,
+    baseAlpha: number,
+    selectedId: string,
+    selectedFloorNum: number
+  ) => {
+    if (!entity.polygon) return;
+
+    const colors = ENTITY_COLORS[eType] || { fill: '#3b82f6', outline: '#2563eb' };
+    const isSelected = eId === selectedId;
+    const isFloorSelected = flLvl === selectedFloorNum && selectedFloorNum > 0;
+
+    if (eType === 'PARCEL') {
+      entity.polygon.height = 0.1;
+      entity.polygon.extrudedHeight = 0.5;
+      entity.polygon.material = Cesium.Color.fromCssColorString(colors.fill).withAlpha(0.15);
+      entity.polygon.outline = true;
+      entity.polygon.outlineColor = Cesium.Color.fromCssColorString(colors.outline).withAlpha(0.9);
+      entity.polygon.outlineWidth = 3;
+      entity.polygon.perPositionHeight = false;
+      entity.polygon.closeTop = true;
+      entity.polygon.closeBottom = true;
+      entity.show = layers.parcelBoundaries;
+      
+      const bbox = calculateBoundingBox(entity);
+      if (bbox) entityBoundingBoxes.current.set(eId, bbox);
+      
+    } else if (isContext) {
+      entity.polygon.height = props.local_base_m?.getValue() || 0;
+      entity.polygon.extrudedHeight = props.local_roof_m?.getValue() || 15;
+      entity.polygon.material = Cesium.Color.fromCssColorString(CONTEXT_BUILDING_COLOR.fill).withAlpha(0.25 * baseAlpha);
+      entity.polygon.outline = true;
+      entity.polygon.outlineColor = Cesium.Color.WHITE.withAlpha(0.3);
+      entity.polygon.outlineWidth = 1;
+      entity.polygon.perPositionHeight = false;
+      entity.polygon.closeTop = true;
+      entity.polygon.closeBottom = true;
+      entity.show = layers.buildings3d;
+      
+      const bbox = calculateBoundingBox(entity);
+      if (bbox) entityBoundingBoxes.current.set(eId, bbox);
+      
+    } else if (eType === 'BUILDING') {
+      entity.polygon.height = props.local_base_m?.getValue() || 0;
+      entity.polygon.extrudedHeight = props.local_roof_m?.getValue() || 18;
+      entity.polygon.material = Cesium.Color.fromCssColorString(colors.fill).withAlpha(isSelected ? 0.9 : 0.6 * baseAlpha);
+      entity.polygon.outline = true;
+      entity.polygon.outlineColor = isSelected 
+        ? Cesium.Color.fromCssColorString('#38bdf8').withAlpha(1.0)
+        : Cesium.Color.WHITE.withAlpha(0.5);
+      entity.polygon.outlineWidth = isSelected ? 4 : 2;
+      entity.polygon.perPositionHeight = false;
+      entity.polygon.closeTop = true;
+      entity.polygon.closeBottom = true;
+      entity.show = layers.buildings3d;
+      
+      const bbox = calculateBoundingBox(entity);
+      if (bbox) entityBoundingBoxes.current.set(eId, bbox);
+      
+    } else if (eType === 'FLOOR') {
+      entity.polygon.height = props.local_base_m?.getValue() || 0;
+      entity.polygon.extrudedHeight = props.local_roof_m?.getValue() || 3;
+      entity.polygon.material = Cesium.Color.fromCssColorString(colors.fill).withAlpha(isFloorSelected ? 0.95 : 0.7 * baseAlpha);
+      entity.polygon.outline = true;
+      entity.polygon.outlineColor = isFloorSelected
+        ? Cesium.Color.fromCssColorString('#38bdf8').withAlpha(1.0)
+        : Cesium.Color.WHITE.withAlpha(0.6);
+      entity.polygon.outlineWidth = isFloorSelected ? 3 : 1.5;
+      entity.polygon.perPositionHeight = false;
+      entity.polygon.closeTop = true;
+      entity.polygon.closeBottom = true;
+      entity.show = layers.floorsUnits;
+      
+      const bbox = calculateBoundingBox(entity);
+      if (bbox) entityBoundingBoxes.current.set(eId, bbox);
+      
+    } else if (eType === 'UNIT') {
+      entity.polygon.height = props.local_base_m?.getValue() || 0;
+      entity.polygon.extrudedHeight = props.local_roof_m?.getValue() || 3;
+      
+      if (isSelected) {
+        entity.polygon.material = Cesium.Color.fromCssColorString(colors.fill).withAlpha(1.0);
+        entity.polygon.outline = true;
+        entity.polygon.outlineColor = Cesium.Color.fromCssColorString('#38bdf8').withAlpha(1.0);
+        entity.polygon.outlineWidth = 4;
+      } else if (isFloorSelected) {
+        entity.polygon.material = Cesium.Color.fromCssColorString(colors.fill).withAlpha(0.85);
+        entity.polygon.outline = true;
+        entity.polygon.outlineColor = Cesium.Color.WHITE.withAlpha(0.7);
+        entity.polygon.outlineWidth = 2;
+      } else {
+        entity.polygon.material = Cesium.Color.fromCssColorString(colors.fill).withAlpha(0.55 * baseAlpha);
+        entity.polygon.outline = true;
+        entity.polygon.outlineColor = Cesium.Color.WHITE.withAlpha(0.4);
+        entity.polygon.outlineWidth = 1;
+      }
+      entity.polygon.perPositionHeight = false;
+      entity.polygon.closeTop = true;
+      entity.polygon.closeBottom = true;
+      entity.show = layers.floorsUnits;
+      
+      const bbox = calculateBoundingBox(entity);
+      if (bbox) entityBoundingBoxes.current.set(eId, bbox);
+      
+    } else if (eType === 'UNDERGROUND') {
+      entity.polygon.height = props.local_base_m?.getValue() || -10;
+      entity.polygon.extrudedHeight = props.local_roof_m?.getValue() || 0;
+      entity.polygon.material = Cesium.Color.fromCssColorString(colors.fill).withAlpha(0.4 * baseAlpha);
+      entity.polygon.outline = true;
+      entity.polygon.outlineColor = Cesium.Color.fromCssColorString(colors.outline).withAlpha(0.8);
+      entity.polygon.outlineWidth = 2;
+      entity.polygon.perPositionHeight = false;
+      entity.show = layers.underground;
+      
+      const bbox = calculateBoundingBox(entity);
+      if (bbox) entityBoundingBoxes.current.set(eId, bbox);
+    }
+  }, [calculateBoundingBox, layers]);
+
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
@@ -165,124 +471,62 @@ export const CesiumViewer: React.FC = () => {
     const load3DData = async () => {
       setLoading3D(true);
       try {
+        entityBoundingBoxes.current.clear();
+
         if (dataSourceRef.current) {
           viewer.dataSources.remove(dataSourceRef.current);
         }
+        if (validationSourceRef.current) {
+          viewer.dataSources.remove(validationSourceRef.current);
+          validationSourceRef.current = null;
+        }
 
-        const geojson = await cadastreApi.getCesiumGeoJSON(
-          explodeFactor,
-          selectedBuildingId || 'B12',
-          selectedEntity?.entity_id || ''
-        );
+        const geojson = await cadastreApi.getCesiumGeoJSON(explodeFactor);
         const ds = await Cesium.GeoJsonDataSource.load(geojson, { clampToGround: false });
 
-        const baseAlpha = Math.max(0.15, (100 - buildingTransparency) / 100);
-        const selectedId = selectedEntity?.entity_id || 'B12_F3_U304';
-        const selectedFloorNum = selectedEntity?.floor_level;
+        const baseAlpha = Math.max(0.1, (100 - buildingTransparency) / 100);
+        const selectedId = selectedEntity?.entity_id || '';
+        const selectedFloorNum = selectedEntity?.floor_level ?? 0;
 
         ds.entities.values.forEach((entity: any) => {
           const props = entity.properties;
-          const eType = props.entity_type ? props.entity_type.getValue() : 'UNIT';
+          const eType = (props.entity_type ? props.entity_type.getValue() : 'UNIT') as EntityType;
           const eId = props.id ? props.id.getValue() : entity.id;
-          const flLvl = props.floor_level ? props.floor_level.getValue() : 1;
+          const flLvl = props.floor_level ? props.floor_level.getValue() : 0;
           const isContext = props.is_context ? props.is_context.getValue() : false;
-          const colorHex = props.color ? props.color.getValue() : '#3b82f6';
+
+          applyEntityStyling(entity, props, eType, eId, flLvl, isContext, baseAlpha, selectedId, selectedFloorNum);
+        });
+
+        const validationIssues = geojson.features?.filter((f: any) => 
+          f.properties?.entity_type === 'VALIDATION_ISSUE'
+        ) || [];
+
+        if (validationIssues.length > 0) {
+          const valDs = await Cesium.GeoJsonDataSource.load({
+            type: 'FeatureCollection',
+            features: validationIssues
+          }, { clampToGround: false });
           
-          const localBase = props.local_base_m ? props.local_base_m.getValue() : 0.0;
-          const localRoof = props.local_roof_m ? props.local_roof_m.getValue() : 3.0;
-
-          if (entity.polygon) {
-            if (eType === 'PARCEL') {
-              // Cadastral ground parcel footprint - Crisp, thin boundary
-              const isSelectedParcel = (eId === selectedEntity?.parcel_id) || (eId === selectedEntity?.entity_id);
-              entity.polygon.height = 0.05;
-              entity.polygon.extrudedHeight = 0.25;
-              entity.polygon.material = Cesium.Color.fromCssColorString(isSelectedParcel ? '#10b981' : '#22c55e').withAlpha(isSelectedParcel ? 0.25 : 0.12);
+          valDs.entities.values.forEach((entity: any) => {
+            if (entity.polygon) {
+              entity.polygon.material = Cesium.Color.fromCssColorString('#ef4444').withAlpha(0.6);
               entity.polygon.outline = true;
-              entity.polygon.outlineColor = Cesium.Color.fromCssColorString(isSelectedParcel ? '#34d399' : '#22c55e').withAlpha(0.95);
-              entity.polygon.outlineWidth = isSelectedParcel ? 4 : 2;
-              entity.show = layers.parcelBoundaries;
-            } else if (isContext) {
-              // Surrounding context buildings - Subdued, semi-transparent architectural massing
-              entity.polygon.height = localBase;
-              entity.polygon.extrudedHeight = localRoof;
-              entity.polygon.material = Cesium.Color.fromCssColorString('#475569').withAlpha(0.25 * baseAlpha);
-              entity.polygon.outline = true;
-              entity.polygon.outlineColor = Cesium.Color.WHITE.withAlpha(0.35);
-              entity.polygon.outlineWidth = 1;
-              entity.show = layers.buildings3d;
-            } else {
-              // Primary Focused Building Storeys / Units
-              entity.polygon.height = localBase;
-              entity.polygon.extrudedHeight = localRoof;
-
-              const isUnitSelected = (eId === selectedId);
-              const isFloorActive = selectedFloorNum !== undefined && (flLvl === selectedFloorNum);
-
-              if (isUnitSelected) {
-                // High-visibility focus for selected unit
-                entity.polygon.material = Cesium.Color.fromCssColorString('#38bdf8').withAlpha(0.98);
-                entity.polygon.outline = true;
-                entity.polygon.outlineColor = Cesium.Color.WHITE;
-                entity.polygon.outlineWidth = 4;
-              } else if (isFloorActive) {
-                // Highlighted active floor
-                entity.polygon.material = Cesium.Color.fromCssColorString(colorHex).withAlpha(0.92);
-                entity.polygon.outline = true;
-                entity.polygon.outlineColor = Cesium.Color.fromCssColorString('#38bdf8').withAlpha(0.9);
-                entity.polygon.outlineWidth = 3;
-              } else {
-                // Non-selected floors in active building
-                entity.polygon.material = Cesium.Color.fromCssColorString(colorHex).withAlpha(0.70 * baseAlpha);
-                entity.polygon.outline = true;
-                entity.polygon.outlineColor = Cesium.Color.WHITE.withAlpha(0.65);
-                entity.polygon.outlineWidth = 1.5;
-              }
-              entity.show = layers.floorsUnits;
+              entity.polygon.outlineColor = Cesium.Color.fromCssColorString('#fecaca').withAlpha(1.0);
+              entity.polygon.outlineWidth = 3;
+              entity.polygon.height = entity.properties.local_base_m?.getValue() || 0;
+              entity.polygon.extrudedHeight = entity.properties.local_roof_m?.getValue() || 3;
+            } else if (entity.polyline) {
+              entity.polyline.material = Cesium.Color.fromCssColorString('#ef4444').withAlpha(0.9);
+              entity.polyline.width = 5;
+              entity.polyline.clampToGround = false;
             }
-          }
-        });
-
-        // Add 3D spatial labels
-        ds.entities.add({
-          position: Cesium.Cartesian3.fromDegrees(77.62515, 12.9358, 24.0 + (6 * explodeFactor)),
-          label: {
-            text: 'TOWER B12\nIN-KA-BLR-P78-B12 | G+5',
-            font: 'bold 11px JetBrains Mono, sans-serif',
-            fillColor: Cesium.Color.WHITE,
-            showBackground: true,
-            backgroundColor: Cesium.Color.fromCssColorString('#0d1321').withAlpha(0.9),
-            backgroundPadding: new Cesium.Cartesian2(8, 5),
-            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-            disableDepthTestDistance: Number.POSITIVE_INFINITY,
-          }
-        });
-
-        ds.entities.add({
-          position: Cesium.Cartesian3.fromDegrees(77.62415, 12.9358, 17.0),
-          label: {
-            text: 'TOWER B11\nContext Commercial',
-            font: '10px Inter, sans-serif',
-            fillColor: Cesium.Color.WHITE.withAlpha(0.8),
-            showBackground: true,
-            backgroundColor: Cesium.Color.BLACK.withAlpha(0.6),
-            backgroundPadding: new Cesium.Cartesian2(6, 3),
-            verticalOrigin: Cesium.VerticalOrigin.TOP,
-          }
-        });
-
-        ds.entities.add({
-          position: Cesium.Cartesian3.fromDegrees(77.6273, 12.9358, 23.0),
-          label: {
-            text: 'TOWER B13\nContext Commercial',
-            font: '10px Inter, sans-serif',
-            fillColor: Cesium.Color.WHITE.withAlpha(0.8),
-            showBackground: true,
-            backgroundColor: Cesium.Color.BLACK.withAlpha(0.6),
-            backgroundPadding: new Cesium.Cartesian2(6, 3),
-            verticalOrigin: Cesium.VerticalOrigin.TOP,
-          }
-        });
+            entity.show = layers.validation;
+          });
+          
+          viewer.dataSources.add(valDs);
+          validationSourceRef.current = valDs;
+        }
 
         viewer.dataSources.add(ds);
         dataSourceRef.current = ds;
@@ -294,19 +538,10 @@ export const CesiumViewer: React.FC = () => {
     };
 
     load3DData();
-  }, [
-    explodeFactor, 
-    buildingTransparency, 
-    selectedEntity?.entity_id, 
-    selectedEntity?.floor_level, 
-    selectedBuildingId, 
-    viewMode,
-    layers.parcelBoundaries, 
-    layers.buildings3d, 
-    layers.floorsUnits
-  ]);
+  }, [explodeFactor, buildingTransparency, selectedEntity?.entity_id, selectedEntity?.floor_level, 
+      layers.parcelBoundaries, layers.buildings3d, layers.floorsUnits, layers.underground, layers.validation,
+      applyEntityStyling]);
 
-  // 4. Roads & Underground Infrastructure Layers
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
@@ -317,34 +552,9 @@ export const CesiumViewer: React.FC = () => {
           const rGeo = await cadastreApi.getRoadsGeoJSON();
           const rDs = await Cesium.GeoJsonDataSource.load(rGeo, {
             stroke: Cesium.Color.fromCssColorString('#94a3b8').withAlpha(0.7),
-            strokeWidth: 5,
+            strokeWidth: 4,
             clampToGround: true
           });
-
-          // Add Street Labels
-          rDs.entities.add({
-            position: Cesium.Cartesian3.fromDegrees(77.6250, 12.9372, 2),
-            label: {
-              text: 'Outer Ring Road',
-              font: 'bold 11px Inter, sans-serif',
-              fillColor: Cesium.Color.fromCssColorString('#f8fafc'),
-              showBackground: true,
-              backgroundColor: Cesium.Color.BLACK.withAlpha(0.65),
-              backgroundPadding: new Cesium.Cartesian2(6, 4)
-            }
-          });
-          rDs.entities.add({
-            position: Cesium.Cartesian3.fromDegrees(77.6250, 12.9345, 2),
-            label: {
-              text: 'Koramangala 5th Block',
-              font: 'bold 11px Inter, sans-serif',
-              fillColor: Cesium.Color.fromCssColorString('#f8fafc'),
-              showBackground: true,
-              backgroundColor: Cesium.Color.BLACK.withAlpha(0.65),
-              backgroundPadding: new Cesium.Cartesian2(6, 4)
-            }
-          });
-
           viewer.dataSources.add(rDs);
           roadsSourceRef.current = rDs;
         }
@@ -376,14 +586,13 @@ export const CesiumViewer: React.FC = () => {
     handleUnderground();
   }, [layers.roads, layers.underground]);
 
-  // 5. Dynamic Camera Framing when Selection, Camera Mode, or FlyTo Target changes
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
 
     if (flyToTarget) {
       viewer.camera.flyTo({
-        destination: Cesium.Cartesian3.fromDegrees(flyToTarget[0], flyToTarget[1] - 0.0018, 120),
+        destination: Cesium.Cartesian3.fromDegrees(flyToTarget[0], flyToTarget[1], 200),
         orientation: {
           heading: Cesium.Math.toRadians(35),
           pitch: Cesium.Math.toRadians(-28),
@@ -394,83 +603,112 @@ export const CesiumViewer: React.FC = () => {
       return;
     }
 
-    // Dynamic bounding sphere calculation based on selection
-    let centerLon = 77.62515;
-    let centerLat = 12.9358;
-    let radius = 60;
-    let range = 160;
-    let pitch = -28;
-    let heading = 35;
-
-    if (selectedBuildingId === 'B11') {
-      centerLon = 77.62415;
-    } else if (selectedBuildingId === 'B13') {
-      centerLon = 77.6273;
+    if (selectedEntity) {
+      const entityId = selectedEntity.entity_id;
+      const eType = selectedEntity.entity_type;
+      
+      let mode: keyof typeof CAMERA_MODES = 'building';
+      if (eType === 'PARCEL') mode = 'parcel';
+      else if (eType === 'BUILDING') mode = 'building';
+      else if (eType === 'FLOOR') mode = 'floor';
+      else if (eType === 'UNIT') mode = 'unit';
+      
+      flyToEntity(entityId, mode);
     }
-
-    if (cameraMode === 'CITY') {
-      radius = 450;
-      range = 950;
-      pitch = -45;
-    } else if (cameraMode === 'PARCEL') {
-      radius = 120;
-      range = 280;
-      pitch = -35;
-    } else if (cameraMode === 'BUILDING') {
-      radius = 50;
-      range = 140;
-      pitch = -25;
-    } else if (cameraMode === 'FLOOR' || cameraMode === 'UNIT') {
-      radius = 25;
-      range = 80;
-      pitch = -18;
-    } else if (cameraMode === 'TOP_DOWN') {
-      radius = 70;
-      range = 220;
-      pitch = -89; // Straight down 2D cadastral perspective
-      heading = 0;
-    } else if (cameraMode === 'ORBIT') {
-      radius = 60;
-      range = 160;
-      pitch = -22;
-      heading = 120;
-    }
-
-    // Adjust target center z if a specific floor is selected
-    const flLvl = selectedEntity?.floor_level ?? 3;
-    const centerZ = Math.max(10.0, (flLvl * 3.0) + (flLvl * explodeFactor));
-    const targetCenter = Cesium.Cartesian3.fromDegrees(centerLon, centerLat, centerZ);
-
-    viewer.camera.flyToBoundingSphere(
-      new Cesium.BoundingSphere(targetCenter, radius),
-      {
-        offset: new Cesium.HeadingPitchRange(
-          Cesium.Math.toRadians(heading),
-          Cesium.Math.toRadians(pitch),
-          range
-        ),
-        duration: 1.0,
-      }
-    );
-  }, [
-    selectedEntity?.entity_id, 
-    selectedEntity?.floor_level, 
-    selectedBuildingId, 
-    cameraMode, 
-    flyToTarget
-  ]);
+  }, [selectedEntity?.entity_id, selectedEntity?.entity_type, flyToTarget, flyToEntity]);
 
   return (
     <div className="relative w-full h-full bg-[#0b0f19] overflow-hidden">
       <div ref={containerRef} className="w-full h-full" id="cesiumContainer" />
       
-      {/* Loading Indicator */}
       {loading3D && (
-        <div className="absolute top-16 right-4 px-3 py-1.5 rounded-lg bg-slate-900/90 border border-white/10 text-cyan-400 text-xs font-mono flex items-center space-x-2 z-10 shadow-xl pointer-events-none">
-          <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></span>
+        <div className="absolute top-16 right-4 px-4 py-2 rounded-lg bg-slate-900/95 border border-white/10 text-cyan-400 text-xs font-mono flex items-center space-x-2 z-10 shadow-xl pointer-events-none animate-in fade-in duration-200">
+          <svg className="w-4 h-4 animate-spin text-cyan-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
           <span>Rendering 3D Cadastre...</span>
         </div>
       )}
+
+      {selectedEntity && (
+        <div className="absolute bottom-20 left-4 right-4 flex justify-center pointer-events-none z-10">
+          <div className="px-4 py-2 rounded-lg bg-slate-900/95 border border-white/10 shadow-xl animate-in slide-in-from-bottom duration-300 pointer-events-auto">
+            <div className="flex items-center space-x-3 text-sm">
+              <div className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></div>
+              <span className="font-medium text-white">
+                {selectedEntity.entity_type}: {selectedEntity.entity_id}
+              </span>
+              {selectedEntity.floor_level && (
+                <span className="px-2 py-0.5 bg-blue-600/30 text-blue-300 rounded text-xs font-mono">
+                  Floor {selectedEntity.floor_level}
+                </span>
+              )}
+              {selectedEntity.unit_number && (
+                <span className="px-2 py-0.5 bg-purple-600/30 text-purple-300 rounded text-xs font-mono">
+                  {selectedEntity.unit_number}
+                </span>
+              )}
+              <span className="px-2 py-0.5 bg-emerald-600/30 text-emerald-300 rounded text-xs font-mono">
+                {selectedEntity.validation_status}
+              </span>
+              <button
+                onClick={() => setCurrentCameraMode('city')}
+                className="ml-2 px-2 py-1 text-[10px] text-slate-400 hover:text-white bg-slate-800 rounded transition"
+              >
+                City View
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="absolute bottom-16 right-4 flex flex-col items-end space-y-2 z-10 pointer-events-none">
+        <div className="flex items-center space-x-2 pointer-events-auto">
+          <span className="text-[10px] text-slate-400 uppercase tracking-wider">View</span>
+          <button
+            onClick={() => setViewMode('reality')}
+            className={`px-2 py-1 rounded text-[10px] font-medium transition ${
+              viewMode === 'reality' 
+                ? 'bg-blue-600 text-white shadow-blue-600/30' 
+                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+            }`}
+          >
+            Reality
+          </button>
+          <button
+            onClick={() => setViewMode('analysis')}
+            className={`px-2 py-1 rounded text-[10px] font-medium transition ${
+              viewMode === 'analysis' 
+                ? 'bg-cyan-600 text-white shadow-cyan-600/30' 
+                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+            }`}
+          >
+            Analysis
+          </button>
+        </div>
+
+        <div className="flex flex-col space-y-1 pointer-events-auto">
+          {Object.entries(CAMERA_MODES).map(([key, mode]) => (
+            <button
+              key={key}
+              onClick={() => {
+                if (selectedEntity) {
+                  flyToEntity(selectedEntity.entity_id, key as keyof typeof CAMERA_MODES);
+                }
+              }}
+              disabled={!selectedEntity}
+              className={`px-2 py-1.5 rounded-l-lg text-[10px] font-medium transition w-32 text-left ${
+                currentCameraMode === key
+                  ? 'bg-cyan-600 text-white shadow-cyan-600/30'
+                  : 'bg-slate-800/90 text-slate-300 hover:bg-slate-700'
+              } ${!selectedEntity ? 'opacity-50 pointer-events-none' : ''}`}
+            >
+              {mode.name}
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   );
 };
