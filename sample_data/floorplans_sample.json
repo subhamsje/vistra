@@ -1,0 +1,27 @@
+[
+  {
+    "building_id": "BLDG_TOWER_A",
+    "has_basement": true,
+    "floor_count": 6,
+    "units": {
+      "1": 4,
+      "2": 4,
+      "3": 4,
+      "4": 4,
+      "5": 2,
+      "6": 2
+    }
+  },
+  {
+    "building_id": "BLDG_TECH_B",
+    "has_basement": true,
+    "floor_count": 5,
+    "units": {
+      "1": 2,
+      "2": 2,
+      "3": 2,
+      "4": 2,
+      "5": 1
+    }
+  }
+]

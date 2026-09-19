@@ -1,0 +1,14 @@
+{
+  "region_code": "BLR",
+  "name": "Bengaluru Urban",
+  "state": "KA",
+  "country": "IN",
+  "default_epsg": 4326,
+  "projected_epsg": 32643,
+  "center_coordinates": {
+    "latitude": 12.9716,
+    "longitude": 77.5946
+  },
+  "average_ground_elevation_m": 920.0,
+  "default_floor_height_m": 3.0
+}

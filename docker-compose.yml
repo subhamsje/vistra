@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  vistra-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vistra_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=sqlite:///database/vistra_spatial.db
+      - VISTRA_HOST=0.0.0.0
+      - VISTRA_PORT=8000
+    volumes:
+      - .:/app
+    restart: unless-stopped

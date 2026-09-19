@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VISTRA | 3D ULPIN & Vertical Property Mapping System</title>
+  <!-- CesiumJS CSS & JS -->
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.114/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.114/Build/Cesium/Cesium.js"></script>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #0b0f19; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    #cesiumContainer { width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
+    .glass-panel { background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.1); }
+    .custom-scroll::-webkit-scrollbar { width: 4px; }
+    .custom-scroll::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 2px; }
+  </style>
+</head>
+<body class="text-slate-100">
+
+  <!-- 3D Cesium Viewer -->
+  <div id="cesiumContainer"></div>
+
+  <!-- Top Navigation Header -->
+  <header class="absolute top-4 left-4 right-4 h-16 glass-panel rounded-xl px-6 flex items-center justify-between z-20 shadow-2xl">
+    <div class="flex items-center space-x-3">
+      <div class="w-9 h-9 rounded-lg bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center font-bold text-white shadow-lg">V</div>
+      <div>
+        <h1 class="text-lg font-bold tracking-wide flex items-center space-x-2">
+          <span>VISTRA</span>
+          <span class="text-xs px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30">SIH 3D ULPIN</span>
+        </h1>
+        <p class="text-xs text-slate-400">Vertical Property Mapping & Deterministic 3D Cadastre</p>
+      </div>
+    </div>
+
+    <!-- Live Controls -->
+    <div class="flex items-center space-x-6">
+      <div class="flex items-center space-x-2 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700">
+        <label for="explodeSlider" class="text-xs text-slate-300 font-medium">Vertical Floor Explosion:</label>
+        <input id="explodeSlider" type="range" min="0" max="6" step="0.5" value="0" class="w-28 accent-cyan-400 cursor-pointer">
+        <span id="explodeVal" class="text-xs text-cyan-400 font-mono w-6">0.0m</span>
+      </div>
+
+      <button id="btnFlyHome" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs rounded-lg border border-slate-700 transition">Reset Camera</button>
+      <button id="btnReload" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-xs font-semibold rounded-lg shadow transition">Re-run Pipeline</button>
+    </div>
+  </header>
+
+  <!-- Left Cadastral Tree Sidebar -->
+  <aside class="absolute top-24 left-4 bottom-4 w-80 glass-panel rounded-xl flex flex-col z-20 shadow-2xl overflow-hidden">
+    <div class="p-4 border-b border-slate-800 flex justify-between items-center">
+      <span class="text-xs uppercase font-bold tracking-wider text-slate-400">Cadastral Hierarchy (LADM)</span>
+      <span id="badgeTree" class="text-xs px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded-full">ACTIVE</span>
+    </div>
+    <div id="treeContainer" class="flex-1 overflow-y-auto p-4 space-y-3 custom-scroll text-sm">
+      <div class="text-xs text-slate-400 animate-pulse">Loading volumetric hierarchy...</div>
+    </div>
+  </aside>
+
+  <!-- Right Property & Inspection Panel -->
+  <aside class="absolute top-24 right-4 bottom-4 w-96 glass-panel rounded-xl flex flex-col z-20 shadow-2xl overflow-hidden">
+    <div class="p-4 border-b border-slate-800 flex justify-between items-center">
+      <span class="text-xs uppercase font-bold tracking-wider text-slate-400">Entity 3D Inspection</span>
+      <span id="inspectStatus" class="text-xs px-2 py-0.5 bg-cyan-500/20 text-cyan-300 rounded font-mono">SELECTED</span>
+    </div>
+
+    <div class="flex-1 overflow-y-auto p-5 space-y-4 custom-scroll text-xs">
+      <div>
+        <div class="text-slate-400 mb-1">3D ULPIN Identity</div>
+        <div id="inspectUlpin" class="p-2.5 bg-slate-900/90 rounded-lg border border-cyan-500/30 text-cyan-300 font-mono text-xs break-all select-all font-semibold">
+          Click any building, floor, or parcel to inspect
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2">
+        <div class="p-3 bg-slate-900/60 rounded-lg border border-slate-800">
+          <div class="text-slate-400">Entity Type</div>
+          <div id="inspectType" class="text-sm font-semibold text-white mt-1">-</div>
+        </div>
+        <div class="p-3 bg-slate-900/60 rounded-lg border border-slate-800">
+          <div class="text-slate-400">Floor Level</div>
+          <div id="inspectFloor" class="text-sm font-semibold text-white mt-1">-</div>
+        </div>
+      </div>
+
+      <div class="p-3 bg-slate-900/60 rounded-lg border border-slate-800">
+        <div class="text-slate-400">Vertical Bounds (Z)</div>
+        <div id="inspectZ" class="text-xs font-mono text-emerald-400 mt-1">-</div>
+      </div>
+
+      <div class="p-3 bg-slate-900/60 rounded-lg border border-slate-800">
+        <div class="text-slate-400">SHA-256 Provenance Seal</div>
+        <div id="inspectHash" class="text-[10px] font-mono text-slate-300 mt-1 break-all bg-black/40 p-1.5 rounded select-all">-</div>
+      </div>
+
+      <!-- Human in the Loop Governance Review -->
+      <div class="pt-2 border-t border-slate-800">
+        <div class="text-xs uppercase font-bold tracking-wider text-slate-400 mb-2">Governance & Action</div>
+        <div class="flex space-x-2">
+          <button onclick="recordGovAction('CONFIRM')" class="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded font-semibold text-white transition">Approve</button>
+          <button onclick="recordGovAction('FREEZE')" class="flex-1 py-1.5 bg-rose-600 hover:bg-rose-500 rounded font-semibold text-white transition">Freeze Dispute</button>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <script>
+    // Initialize Cesium Ion & Viewer (Offline / Mock fallback enabled)
+    Cesium.Ion.defaultAccessToken = "";
+    const viewer = new Cesium.Viewer('cesiumContainer', {
+      terrainProvider: new Cesium.EllipsoidTerrainProvider(),
+      baseLayerPicker: false,
+      geocoder: false,
+      homeButton: false,
+      sceneModePicker: false,
+      navigationHelpButton: false,
+      animation: false,
+      timeline: false,
+      fullscreenButton: false
+    });
+
+    viewer.scene.globe.depthTestAgainstTerrain = true;
+    viewer.scene.globe.enableLighting = false;
+
+    let activeDataSource = null;
+    let selectedFeatureProps = null;
+
+    async function loadCadastralTree() {
+      try {
+        const res = await fetch("/api/cadastral-tree");
+        const data = await res.json();
+        const container = document.getElementById("treeContainer");
+        container.innerHTML = "";
+
+        data.forEach(parcel => {
+          const pDiv = document.createElement("div");
+          pDiv.className = "p-2.5 bg-slate-900/80 rounded-lg border border-slate-800 hover:border-blue-500/50 cursor-pointer transition";
+          pDiv.innerHTML = `
+            <div class="font-semibold text-white flex items-center justify-between">
+              <span>📍 ${parcel.name}</span>
+              <span class="text-[10px] bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded">PARCEL</span>
+            </div>
+            <div class="text-[11px] text-slate-400 mt-1">Z: ${parcel.z_bounds[0]}m to ${parcel.z_bounds[1]}m</div>
+            <div class="mt-2 pl-3 border-l-2 border-slate-700 space-y-2">
+              ${parcel.buildings.map(b => `
+                <div class="text-xs text-cyan-300 font-medium">🏢 ${b.name}</div>
+                <div class="pl-2 space-y-1 text-[11px] text-slate-400">
+                  ${b.floors.map(fl => `<div>└─ 🪜 ${fl.name} (${fl.units.length} units)</div>`).join("")}
+                </div>
+              `).join("")}
+            </div>
+          `;
+          container.appendChild(pDiv);
+        });
+      } catch (err) {
+        console.error("Tree load error", err);
+      }
+    }
+
+    async function load3DFeatures(explodeFactor = 0.0) {
+      if (activeDataSource) {
+        viewer.dataSources.remove(activeDataSource);
+      }
+      try {
+        const res = await fetch(`/api/cesium-geojson?explode_factor=${explodeFactor}`);
+        const geojson = await res.json();
+        
+        activeDataSource = await Cesium.GeoJsonDataSource.load(geojson, {
+          clampToGround: false
+        });
+
+        const entities = activeDataSource.entities.values;
+        for (let i = 0; i < entities.length; i++) {
+          const entity = entities[i];
+          const props = entity.properties;
+          const entityType = props.entity_type ? props.entity_type.getValue() : "PARCEL";
+          const colorHex = props.color ? props.color.getValue() : "#3b82f6";
+          const baseM = props.base_m ? props.base_m.getValue() : 920.0;
+          const roofM = props.roof_m ? props.roof_m.getValue() : 923.0;
+
+          if (entity.polygon) {
+            entity.polygon.height = baseM;
+            entity.polygon.extrudedHeight = entityType === "PARCEL" ? baseM + 0.3 : roofM;
+            entity.polygon.material = Cesium.Color.fromCssColorString(colorHex).withAlpha(0.8);
+            entity.polygon.outline = true;
+            entity.polygon.outlineColor = Cesium.Color.WHITE.withAlpha(0.6);
+          }
+        }
+
+        viewer.dataSources.add(activeDataSource);
+        if (explodeFactor === 0.0) {
+          viewer.zoomTo(activeDataSource, new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-45), 250));
+        }
+      } catch (err) {
+        console.error("Error loading Cesium GeoJSON", err);
+      }
+    }
+
+    // Entity Selection & Inspection Handler
+    const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+    handler.setInputAction(function (movement) {
+      const pickedObject = viewer.scene.pick(movement.position);
+      if (Cesium.defined(pickedObject) && pickedObject.id && pickedObject.id.properties) {
+        const props = pickedObject.id.properties;
+        selectedFeatureProps = props;
+
+        document.getElementById("inspectUlpin").innerText = props.ulpin_3d ? props.ulpin_3d.getValue() : "NO_ULPIN";
+        document.getElementById("inspectType").innerText = props.entity_type ? props.entity_type.getValue() : "UNIT";
+        document.getElementById("inspectFloor").innerText = props.floor_level ? props.floor_level.getValue() : (props.unit_number ? props.unit_number.getValue() : "1");
+        document.getElementById("inspectZ").innerText = `${props.base_m ? props.base_m.getValue() : 0}m to ${props.roof_m ? props.roof_m.getValue() : 0}m`;
+        document.getElementById("inspectHash").innerText = props.audit_hash ? props.audit_hash.getValue() : "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+      }
+    }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+    // Explode Slider Listener
+    document.getElementById("explodeSlider").addEventListener("input", (e) => {
+      const val = parseFloat(e.target.value);
+      document.getElementById("explodeVal").innerText = `${val.toFixed(1)}m`;
+      load3DFeatures(val);
+    });
+
+    document.getElementById("btnFlyHome").addEventListener("click", () => {
+      if (activeDataSource) {
+        viewer.zoomTo(activeDataSource, new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-45), 250));
+      }
+    });
+
+    async function recordGovAction(action) {
+      const ulpin = document.getElementById("inspectUlpin").innerText;
+      if (!ulpin || ulpin.includes("Click any")) {
+        alert("Please click an entity in 3D first!");
+        return;
+      }
+      try {
+        const res = await fetch("/api/governance/decision", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            entity_id: ulpin,
+            ulpin_3d: ulpin,
+            action: action,
+            reviewer: "Lead Cadastral Officer",
+            notes: `Verified via VISTRA 3D interactive viewer.`
+          })
+        });
+        const d = await res.json();
+        alert(`Governance Decision Logged: [${action}]\nAudit Hash: ${d.audit_hash.substring(0, 16)}...`);
+      } catch (err) {
+        alert("Failed to submit governance decision: " + err.message);
+      }
+    }
+
+    // Initial Boots
+    loadCadastralTree();
+    load3DFeatures(0.0);
+  </script>
+</body>
+</html>
