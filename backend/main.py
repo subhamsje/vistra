@@ -154,16 +154,44 @@ def health(project: Optional[str] = Query(None)):
         }
     }
 
+# User Profile State (configurable via Landing page or Topbar/Sidebar)
+CURRENT_USER_PROFILE = {
+    "id": "USR-1082",
+    "name": "Ananya Rao",
+    "role": "Chief Cadastral Surveyor",
+    "initials": "AR",
+    "department": "Karnataka State Remote Sensing Applications Centre (KSRSAC)",
+    "notifications_count": 0
+}
+
+class UserProfileUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    role: Optional[str] = None
+    department: Optional[str] = None
+
+def _calculate_initials(name: str) -> str:
+    parts = [p.strip() for p in name.strip().split() if p.strip()]
+    if not parts:
+        return "SU"
+    if len(parts) == 1:
+        return parts[0][:2].upper()
+    return f"{parts[0][0]}{parts[-1][0]}".upper()
+
 @app.get("/api/user")
 def get_user_profile():
-    return {
-        "id": "USR-1082",
-        "name": "Ananya Rao",
-        "role": "Chief Cadastral Surveyor",
-        "initials": "AR",
-        "department": "Karnataka State Remote Sensing Applications Centre (KSRSAC)",
-        "notifications_count": 0
-    }
+    return CURRENT_USER_PROFILE
+
+@app.post("/api/user")
+def update_user_profile(payload: UserProfileUpdateRequest):
+    global CURRENT_USER_PROFILE
+    if payload.name is not None and payload.name.strip():
+        CURRENT_USER_PROFILE["name"] = payload.name.strip()
+        CURRENT_USER_PROFILE["initials"] = _calculate_initials(payload.name)
+    if payload.role is not None and payload.role.strip():
+        CURRENT_USER_PROFILE["role"] = payload.role.strip()
+    if payload.department is not None and payload.department.strip():
+        CURRENT_USER_PROFILE["department"] = payload.department.strip()
+    return CURRENT_USER_PROFILE
 
 @app.get("/api/jurisdictions")
 def get_jurisdictions():

@@ -42,6 +42,7 @@ interface CadastreContextType {
   activeJurisdiction: Jurisdiction | null;
   setActiveJurisdiction: (j: Jurisdiction) => void;
   user: UserProfile | null;
+  updateUserProfile: (profile: Partial<UserProfile>) => Promise<UserProfile | null>;
   reviewQueueCount: number;
   pipelineStatus: PipelineStatus | null;
   layers: LayerVisibilityState;
@@ -217,6 +218,23 @@ export const CadastreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   };
 
+  // Update User Profile state and persist
+  const updateUserProfile = async (profileUpdate: Partial<UserProfile>): Promise<UserProfile | null> => {
+    try {
+      const updated = await cadastreApi.updateUserProfile(profileUpdate);
+      if (updated) {
+        setUser(updated);
+        try {
+          localStorage.setItem('vistra_user_profile', JSON.stringify(updated));
+        } catch (_) {}
+        return updated;
+      }
+    } catch (e) {
+      console.warn('Failed updating user profile:', e);
+    }
+    return null;
+  };
+
   // Switch active project
   const setActiveProjectById = async (projectId: string) => {
     try {
@@ -304,6 +322,7 @@ export const CadastreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         activeJurisdiction,
         setActiveJurisdiction,
         user,
+        updateUserProfile,
         reviewQueueCount,
         pipelineStatus,
         layers,

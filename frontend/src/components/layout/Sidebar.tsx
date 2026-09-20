@@ -27,7 +27,7 @@ interface NavItem {
 }
 
 export const Sidebar: React.FC = () => {
-  const { activeView, setActiveView, reviewQueueCount } = useCadastre();
+  const { activeView, setActiveView, reviewQueueCount, user } = useCadastre();
   const [collapsed, setCollapsed] = React.useState(false);
 
   const navItems: NavItem[] = [
@@ -116,10 +116,21 @@ export const Sidebar: React.FC = () => {
         </nav>
       </div>
 
-      {/* Bottom Footer: India Mission Branding */}
+      {/* Bottom Footer: India Mission Branding & Surveyor Profile */}
       {!collapsed ? (
-        <div className="p-3 border-t border-slate-200/80 space-y-2.5 bg-slate-50/60">
-          <div className="p-2.5 rounded-xl bg-white border border-slate-200 shadow-xs">
+        <div className="p-3 border-t border-slate-200/80 space-y-2 bg-slate-50/60">
+          {/* Active Surveyor Profile */}
+          <div className="p-2 rounded-xl bg-white border border-slate-200 shadow-xs flex items-center space-x-2.5">
+            <div className="w-7 h-7 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-xs">
+              {user?.initials || 'AR'}
+            </div>
+            <div className="overflow-hidden leading-tight flex-1">
+              <div className="font-semibold text-slate-900 text-xs truncate">{user?.name || 'Surveyor'}</div>
+              <div className="text-[10px] text-slate-500 truncate">{user?.role || 'Reviewer'}</div>
+            </div>
+          </div>
+
+          <div className="p-2 rounded-xl bg-white/70 border border-slate-200/80 shadow-xs">
             <div className="flex items-center justify-between">
               <span className="text-[10px] text-slate-600 font-medium leading-tight">3D Land Records & ULPIN Stack</span>
               <div className="w-5 h-3 rounded-xs border border-slate-300 overflow-hidden shrink-0 flex flex-col ml-2">
@@ -141,7 +152,10 @@ export const Sidebar: React.FC = () => {
           </div>
         </div>
       ) : (
-        <div className="p-2 border-t border-slate-200/80 flex justify-center">
+        <div className="p-2 border-t border-slate-200/80 flex flex-col items-center space-y-2">
+          <div className="w-7 h-7 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-xs shadow-xs" title={user?.name || 'Surveyor'}>
+            {user?.initials || 'AR'}
+          </div>
           <div className="w-6 h-4 rounded-xs border border-slate-300 overflow-hidden flex flex-col">
             <div className="h-1.5 bg-[#FF9933]"></div>
             <div className="h-1.5 bg-white"></div>

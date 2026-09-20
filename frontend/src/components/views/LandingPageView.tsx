@@ -20,7 +20,11 @@ import {
   ArrowUpRight,
   Eye,
   Radio,
-  FileSpreadsheet
+  FileSpreadsheet,
+  User,
+  UserCheck,
+  Sparkles,
+  Navigation
 } from 'lucide-react';
 import { ProjectRecord } from '../../types/cadastre';
 import { cadastreApi } from '../../services/api';
@@ -37,11 +41,28 @@ interface CadastralFeature {
 }
 
 export const LandingPageView: React.FC = () => {
-  const { navigateTo, setActiveProjectById } = useCadastre();
+  const { navigateTo, setActiveProjectById, user, updateUserProfile } = useCadastre();
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [activeProject, setActiveProject] = useState<ProjectRecord | null>(null);
   const [features, setFeatures] = useState<CadastralFeature[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+
+  // User input form state on landing page
+  const [surveyorName, setSurveyorName] = useState<string>('');
+  const [surveyorRole, setSurveyorRole] = useState<string>('Chief Cadastral Surveyor');
+  const [surveyorDept, setSurveyorDept] = useState<string>('');
+  const [selectedTargetProjectId, setSelectedTargetProjectId] = useState<string>('blr_koramangala');
+  const [targetKhasraInput, setTargetKhasraInput] = useState<string>('');
+  const [isProfileSavedSuccess, setIsProfileSavedSuccess] = useState<boolean>(false);
+
+  // Sync user defaults when context loads
+  useEffect(() => {
+    if (user) {
+      setSurveyorName(user.name);
+      setSurveyorRole(user.role);
+      setSurveyorDept(user.department);
+    }
+  }, [user]);
   
   // Interactive 3D Scene Controls on Landing
   const [manualExplode, setManualExplode] = useState<number>(0.0);
@@ -364,10 +385,38 @@ export const LandingPageView: React.FC = () => {
     return Math.min(6, Math.max(1, Math.floor(transformationProgress * 7)));
   }, [transformationProgress, prefersReducedMotion]);
 
-  const handleLaunchWorkspace = (projectId?: string) => {
-    const target = projectId || activeProject?.id || 'blr_koramangala';
+  const handleLaunchWorkspace = async (projectId?: string) => {
+    const target = projectId || selectedTargetProjectId || activeProject?.id || 'blr_koramangala';
+    
+    // If user customized their profile, persist it before opening workspace
+    if (surveyorName.trim()) {
+      await updateUserProfile({
+        name: surveyorName.trim(),
+        role: surveyorRole.trim() || 'Chief Cadastral Surveyor',
+        department: surveyorDept.trim() || 'Survey & Land Records Department'
+      });
+    }
+
     setActiveProjectById(target);
-    navigateTo('/app', { project: target });
+    const queryParams: Record<string, string> = { project: target };
+    if (targetKhasraInput.trim()) {
+      queryParams['khasra'] = targetKhasraInput.trim();
+    }
+    navigateTo('/app', queryParams);
+  };
+
+  const handleApplySurveyorIdentity = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!surveyorName.trim()) return;
+    const updated = await updateUserProfile({
+      name: surveyorName.trim(),
+      role: surveyorRole.trim() || 'Chief Cadastral Surveyor',
+      department: surveyorDept.trim() || 'Survey & Land Records Department'
+    });
+    if (updated) {
+      setIsProfileSavedSuccess(true);
+      setTimeout(() => setIsProfileSavedSuccess(false), 3000);
+    }
   };
 
   return (
@@ -444,7 +493,7 @@ export const LandingPageView: React.FC = () => {
               </p>
 
               {/* Action Buttons */}
-              <div className="flex flex-wrap items-center gap-3 pt-2">
+              <div className="flex flex-wrap items-center gap-3 pt-1">
                 <button
                   onClick={() => handleLaunchWorkspace()}
                   className="px-4 py-2.5 rounded bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition flex items-center space-x-2 shadow-xs"
@@ -460,6 +509,100 @@ export const LandingPageView: React.FC = () => {
                   View Methodology
                 </a>
               </div>
+            </div>
+
+            {/* Interactive User Input: Surveyor Identity & Target Site Setup */}
+            <div className="p-4 rounded-xl bg-white border border-blue-200/80 shadow-sm space-y-3">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                <div className="flex items-center space-x-2">
+                  <div className="w-6 h-6 rounded-md bg-blue-50 text-blue-600 flex items-center justify-center">
+                    <User className="w-3.5 h-3.5" />
+                  </div>
+                  <span className="font-bold text-slate-900 text-xs">Surveyor Session & Target Input</span>
+                </div>
+                {isProfileSavedSuccess && (
+                  <span className="flex items-center space-x-1 text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 animate-in fade-in duration-200">
+                    <CheckCircle2 className="w-3 h-3" />
+                    <span>Saved!</span>
+                  </span>
+                )}
+              </div>
+
+              <form onSubmit={handleApplySurveyorIdentity} className="space-y-2.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">Surveyor Name</label>
+                    <input
+                      type="text"
+                      value={surveyorName}
+                      onChange={(e) => setSurveyorName(e.target.value)}
+                      placeholder="e.g. Ananya Rao"
+                      className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium text-slate-800 bg-slate-50/50"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">Surveyor Role</label>
+                    <input
+                      type="text"
+                      value={surveyorRole}
+                      onChange={(e) => setSurveyorRole(e.target.value)}
+                      placeholder="e.g. Chief Cadastral Surveyor"
+                      className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium text-slate-800 bg-slate-50/50"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">Target Cadastral Site</label>
+                    <select
+                      value={selectedTargetProjectId}
+                      onChange={(e) => {
+                        setSelectedTargetProjectId(e.target.value);
+                        handleSwitchProject(e.target.value);
+                      }}
+                      className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium text-slate-800 bg-slate-50/50"
+                    >
+                      {projects.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} ({p.jurisdiction})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">Search Khasra / Survey #</label>
+                    <input
+                      type="text"
+                      value={targetKhasraInput}
+                      onChange={(e) => setTargetKhasraInput(e.target.value)}
+                      placeholder="e.g. SY-84/2A or KH-109"
+                      className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium text-slate-800 bg-slate-50/50"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between pt-1">
+                  <button
+                    type="submit"
+                    className="text-[11px] font-semibold text-slate-600 hover:text-slate-900 px-2.5 py-1 rounded border border-slate-200 hover:bg-slate-50 transition flex items-center space-x-1"
+                  >
+                    <UserCheck className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Update Identity</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleLaunchWorkspace(selectedTargetProjectId)}
+                    className="text-[11px] font-semibold bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-1 rounded transition flex items-center space-x-1 shadow-xs"
+                  >
+                    <span>Launch Configured Workspace</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </form>
             </div>
 
             {/* Active Real Dataset Summary Card */}

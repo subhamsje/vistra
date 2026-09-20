@@ -78,6 +78,21 @@ export const cadastreApi = {
     }
   },
 
+  async updateUserProfile(profile: Partial<UserProfile>): Promise<UserProfile | null> {
+    try {
+      const res = await fetch(`${API_BASE}/user`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(profile)
+      });
+      if (!res.ok) throw new Error('Failed to update user profile');
+      return await res.json();
+    } catch (e) {
+      console.warn('Failed to update user profile:', e);
+      return null;
+    }
+  },
+
   async getPipelineStatus(projectId?: string): Promise<PipelineStatus | null> {
     try {
       const url = projectId ? `${API_BASE}/pipeline/status?project=${encodeURIComponent(projectId)}` : `${API_BASE}/pipeline/status`;

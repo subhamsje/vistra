@@ -19,12 +19,33 @@ export const Topbar: React.FC = () => {
     setActiveProjectById,
     navigateTo,
     user, 
+    updateUserProfile,
     reviewQueueCount,
     pipelineStatus,
     setIsCommandPaletteOpen 
   } = useCadastre();
 
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [editName, setEditName] = useState(user?.name || 'Ananya Rao');
+  const [editRole, setEditRole] = useState(user?.role || 'Chief Cadastral Surveyor');
+  const [editDepartment, setEditDepartment] = useState(user?.department || 'Survey & Land Records Department');
+
+  // Keep modal inputs in sync when user context loads/changes
+  React.useEffect(() => {
+    if (user) {
+      setEditName(user.name);
+      setEditRole(user.role);
+      setEditDepartment(user.department);
+    }
+  }, [user]);
+
+  const editInitials = React.useMemo(() => {
+    const parts = editName.trim().split(' ').filter(Boolean);
+    if (!parts.length) return 'SU';
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+  }, [editName]);
 
   return (
     <header className="h-14 px-4 bg-white/80 backdrop-blur-xl border-b border-slate-200/80 flex items-center justify-between z-30 shrink-0 select-none text-slate-800 shadow-xs">
@@ -128,15 +149,108 @@ export const Topbar: React.FC = () => {
           )}
         </button>
 
-        {/* User Profile */}
-        <div className="flex items-center space-x-2 pl-2 border-l border-slate-200">
-          <div className="w-7 h-7 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
-            {user?.initials || 'AR'}
-          </div>
-          <div className="text-left leading-tight hidden sm:block">
-            <div className="font-semibold text-slate-900 text-xs">{user?.name || 'Surveyor'}</div>
-            <div className="text-[10px] text-slate-500">{user?.role || 'Reviewer'}</div>
-          </div>
+        {/* User Profile (Interactive & Editable) */}
+        <div className="relative">
+          <button 
+            onClick={() => setIsProfileModalOpen(true)}
+            className="flex items-center space-x-2 pl-2 border-l border-slate-200 hover:opacity-80 transition group text-left"
+            title="Click to edit surveyor profile & identity"
+          >
+            <div className="w-7 h-7 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-xs shadow-xs group-hover:ring-2 group-hover:ring-blue-400/50 transition">
+              {user?.initials || 'AR'}
+            </div>
+            <div className="text-left leading-tight hidden sm:block">
+              <div className="font-semibold text-slate-900 text-xs flex items-center space-x-1">
+                <span>{user?.name || 'Surveyor'}</span>
+                <span className="text-[10px] text-blue-500 opacity-0 group-hover:opacity-100 transition">✎</span>
+              </div>
+              <div className="text-[10px] text-slate-500 truncate max-w-[140px]">{user?.role || 'Reviewer'}</div>
+            </div>
+          </button>
+
+          {/* Edit Profile Modal Dialog */}
+          {isProfileModalOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs">
+              <div className="w-full max-w-md bg-white rounded-2xl border border-slate-200 shadow-2xl p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div className="flex items-center space-x-2.5">
+                    <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-sm shadow-xs">
+                      {editInitials}
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-900">Surveyor Identity Profile</h3>
+                      <p className="text-[11px] text-slate-500">Authorized Cadastral Officer & Digital Signatory</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setIsProfileModalOpen(false)}
+                    className="text-slate-400 hover:text-slate-700 p-1 rounded-lg hover:bg-slate-100 text-sm font-bold"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="space-y-3 text-xs">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">Full Name</label>
+                    <input
+                      type="text"
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-medium text-slate-900 bg-white"
+                      placeholder="e.g. Ananya Rao"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">Designation / Role</label>
+                    <input
+                      type="text"
+                      value={editRole}
+                      onChange={(e) => setEditRole(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-medium text-slate-900 bg-white"
+                      placeholder="e.g. Chief Cadastral Surveyor"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">Department / Organization</label>
+                    <input
+                      type="text"
+                      value={editDepartment}
+                      onChange={(e) => setEditDepartment(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 text-slate-900 bg-white text-[11px]"
+                      placeholder="e.g. Survey & Land Records Department"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
+                  <button
+                    onClick={() => setIsProfileModalOpen(false)}
+                    className="px-3.5 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-medium transition"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={async () => {
+                      if (editName.trim()) {
+                        await updateUserProfile({
+                          name: editName.trim(),
+                          role: editRole.trim(),
+                          department: editDepartment.trim()
+                        });
+                        setIsProfileModalOpen(false);
+                      }
+                    }}
+                    className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-xs transition"
+                  >
+                    Save Profile
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </header>
