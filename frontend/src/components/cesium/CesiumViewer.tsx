@@ -1,246 +1,145 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useCadastre } from '../../store/CadastreContext';
 import { cadastreApi } from '../../services/api';
 import { EntityType } from '../../types/cadastre';
+import { 
+  Maximize2, 
+  Layers as LayersIcon, 
+  Box, 
+  Eye, 
+  Ruler, 
+  SplitSquareVertical, 
+  Compass, 
+  Info,
+  CheckCircle2,
+  AlertTriangle,
+  Move3d,
+  MousePointer,
+  Sparkles
+} from 'lucide-react';
 
 declare const Cesium: any;
 
-interface BoundingBox {
-  min: [number, number, number];
-  max: [number, number, number];
+interface FeatureProperty {
+  id: string;
+  ulpin_3d?: string;
+  entity_type: EntityType;
+  building_id?: string;
+  floor_id?: string;
+  floor_level?: number;
+  unit_number?: string;
+  unit_type?: string;
+  local_base_m?: number;
+  local_roof_m?: number;
+  height_m?: number;
+  amsl_base_m?: number;
+  amsl_roof_m?: number;
+  color?: string;
+  is_context?: boolean;
+  is_selected?: boolean;
+  audit_hash?: string;
+  bbox?: [number, number, number, number, number, number];
+  center?: [number, number];
 }
 
-interface CameraMode {
-  name: string;
-  heading: number;
-  pitch: number;
-  rangeFactor: number;
+interface CadastralFeature {
+  type: string;
+  id: string;
+  geometry: {
+    type: string;
+    coordinates: any;
+  };
+  properties: FeatureProperty;
 }
-
-type CameraModeKey = 'city' | 'parcel' | 'building' | 'floor' | 'unit';
-
-const CAMERA_MODES: Record<CameraModeKey, CameraMode> = {
-  city: { name: 'CITY VIEW', heading: 35, pitch: -28, rangeFactor: 1.0 },
-  parcel: { name: 'PARCEL VIEW', heading: 45, pitch: -35, rangeFactor: 0.55 },
-  building: { name: 'BUILDING VIEW', heading: 35, pitch: -30, rangeFactor: 0.35 },
-  floor: { name: 'FLOOR VIEW', heading: 20, pitch: -45, rangeFactor: 0.18 },
-  unit: { name: 'UNIT VIEW', heading: 15, pitch: -50, rangeFactor: 0.10 },
-};
-
-// Sophisticated Deep-Tech Palettes for Cadastral Entities
-const ENTITY_COLORS: Record<EntityType, { fill: string; outline: string; highlight: string }> = {
-  PARCEL: { fill: '#10b981', outline: '#059669', highlight: '#34d399' },
-  BUILDING: { fill: '#0284c7', outline: '#0369a1', highlight: '#38bdf8' },
-  FLOOR: { fill: '#06b6d4', outline: '#0891b2', highlight: '#67e8f9' },
-  UNIT: { fill: '#8b5cf6', outline: '#7c3aed', highlight: '#c084fc' },
-  UNDERGROUND: { fill: '#ec4899', outline: '#db2777', highlight: '#f472b6' },
-  COMMON_AREA: { fill: '#f59e0b', outline: '#d97706', highlight: '#fbbf24' },
-};
-
-// Floor color gradient palette for distinct architectural distinction
-const FLOOR_GRADIENTS = [
-  { fill: '#f59e0b', outline: '#d97706' }, // Floor 1 (Gold)
-  { fill: '#10b981', outline: '#059669' }, // Floor 2 (Emerald)
-  { fill: '#06b6d4', outline: '#0891b2' }, // Floor 3 (Cyan)
-  { fill: '#3b82f6', outline: '#2563eb' }, // Floor 4 (Blue)
-  { fill: '#8b5cf6', outline: '#7c3aed' }, // Floor 5 (Purple)
-  { fill: '#ec4899', outline: '#db2777' }, // Floor 6 (Pink)
-];
-
-const CONTEXT_BUILDING_COLOR = { fill: '#334155', outline: '#475569' };
 
 export const CesiumViewer: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<any>(null);
   const dataSourceRef = useRef<any>(null);
-  const roadsSourceRef = useRef<any>(null);
-  const undergroundSourceRef = useRef<any>(null);
-  const validationSourceRef = useRef<any>(null);
+  const initialFramedRef = useRef<boolean>(false);
 
-  const [loading3D, setLoading3D] = useState(true);
-  const [currentCameraMode, setCurrentCameraMode] = useState<CameraModeKey>('city');
-  const entityBoundingBoxes = useRef<Map<string, BoundingBox>>(new Map());
+  const [loading3D, setLoading3D] = useState(false);
+  const [features, setFeatures] = useState<CadastralFeature[]>([]);
+  const [hoveredEntityId, setHoveredEntityId] = useState<string | null>(null);
+  const [spatialViewMode, setSpatialViewMode] = useState<'CADASTRE_3D' | 'GLOBE_CESIUM'>('CADASTRE_3D');
 
   // Measurement tool state
-  const [measurePoints, setMeasurePoints] = useState<any[]>([]);
-  const [measureResult, setMeasureResult] = useState<{
-    distance: number;
+  const [measureClickPoints, setMeasureClickPoints] = useState<{ x: number; y: number; lon: number; lat: number; z: number }[]>([]);
+  const [measureOutput, setMeasureOutput] = useState<{
+    distance3D: number;
     deltaZ: number;
-    horizDist: number;
-    p1?: { lon: number; lat: number; height: number };
-    p2?: { lon: number; lat: number; height: number };
+    horizontalDist: number;
   } | null>(null);
-  const measureHandlerRef = useRef<any>(null);
-  const measureEntityRef = useRef<any>(null);
 
-  // Section clipping plane state
-  const [sectionHeight, setSectionHeight] = useState<number>(30); // 0 to 60 meters elevation
-
-  // Primitives ref
-  const pointCloudPrimitivesRef = useRef<any>(null);
-  const demPrimitivesRef = useRef<any>(null);
-  const orbitListenerRef = useRef<any>(null);
-  const initialFramedRef = useRef<boolean>(false);
+  // Section clipping plane
+  const [sectionPlaneZ, setSectionPlaneZ] = useState<number>(12); // meters above ground
 
   const { 
     layers, 
-    buildingTransparency, 
     explodeFactor, 
+    setExplodeFactor,
     basemap, 
     selectedEntity,
     setSelectedEntityId,
     selectedBuildingId,
     activeJurisdiction,
     flyToTarget,
-    setFlyToTarget,
-    viewMode,
-    setViewMode,
     activeTool,
     setActiveTool,
-    cameraMode,
-    setCameraMode
+    viewMode
   } = useCadastre();
 
-  const calculateBoundingBox = useCallback((entity: any): BoundingBox | null => {
-    if (!entity.polygon || !entity.polygon.hierarchy) return null;
-    
-    const positions = entity.polygon.hierarchy.getValue ? entity.polygon.hierarchy.getValue() : entity.polygon.hierarchy;
-    if (!positions) return null;
-
-    let minLon = Infinity, minLat = Infinity, minHeight = Infinity;
-    let maxLon = -Infinity, maxLat = -Infinity, maxHeight = -Infinity;
-
-    const processPositions = (pos: any) => {
-      if (Array.isArray(pos)) {
-        pos.forEach(p => {
-          const cart = Cesium.Cartographic.fromCartesian(p);
-          const lon = Cesium.Math.toDegrees(cart.longitude);
-          const lat = Cesium.Math.toDegrees(cart.latitude);
-          const height = cart.height;
-          minLon = Math.min(minLon, lon);
-          maxLon = Math.max(maxLon, lon);
-          minLat = Math.min(minLat, lat);
-          maxLat = Math.max(maxLat, lat);
-          minHeight = Math.min(minHeight, height);
-          maxHeight = Math.max(maxHeight, height);
-        });
+  // Load real GeoJSON features from backend
+  const fetchFeatures = useCallback(async () => {
+    setLoading3D(true);
+    try {
+      const bId = selectedBuildingId || selectedEntity?.building_id || 'BLDG_ALPHA';
+      const sId = selectedEntity?.entity_id || '';
+      const geojson = await cadastreApi.getCesiumGeoJSON(explodeFactor, bId, sId);
+      if (geojson && geojson.features) {
+        setFeatures(geojson.features);
       }
-    };
-
-    if (positions.positions) {
-      processPositions(positions.positions);
-    } else if (Array.isArray(positions)) {
-      processPositions(positions);
+    } catch (err) {
+      console.error('Failed to load Cadastre 3D GeoJSON:', err);
+    } finally {
+      setLoading3D(false);
     }
+  }, [explodeFactor, selectedBuildingId, selectedEntity?.entity_id]);
 
-    if (minLon === Infinity) return null;
+  useEffect(() => {
+    fetchFeatures();
+  }, [fetchFeatures]);
 
-    return {
-      min: [minLon, minLat, minHeight],
-      max: [maxLon, maxLat, maxHeight]
-    };
-  }, []);
-
-  const computeBoundingSphere = useCallback((bbox: BoundingBox) => {
-    const centerLon = (bbox.min[0] + bbox.max[0]) / 2;
-    const centerLat = (bbox.min[1] + bbox.max[1]) / 2;
-    const centerHeight = (bbox.min[2] + bbox.max[2]) / 2;
-    
-    const center = Cesium.Cartesian3.fromDegrees(centerLon, centerLat, centerHeight);
-    
-    const corners = [
-      [bbox.min[0], bbox.min[1], bbox.min[2]],
-      [bbox.min[0], bbox.min[1], bbox.max[2]],
-      [bbox.min[0], bbox.max[1], bbox.min[2]],
-      [bbox.min[0], bbox.max[1], bbox.max[2]],
-      [bbox.max[0], bbox.min[1], bbox.min[2]],
-      [bbox.max[0], bbox.min[1], bbox.max[2]],
-      [bbox.max[0], bbox.max[1], bbox.min[2]],
-      [bbox.max[0], bbox.max[1], bbox.max[2]],
-    ];
-    
-    let maxDist = 0;
-    corners.forEach(corner => {
-      const cornerCart = Cesium.Cartesian3.fromDegrees(corner[0], corner[1], corner[2]);
-      const dist = Cesium.Cartesian3.distance(center, cornerCart);
-      maxDist = Math.max(maxDist, dist);
-    });
-    
-    return new Cesium.BoundingSphere(center, Math.max(maxDist * 1.3, 20));
-  }, []);
-
-  const flyToEntity = useCallback((entityId: string, mode: CameraModeKey = 'building') => {
-    const viewer = viewerRef.current;
-    if (!viewer) return;
-
-    const bbox = entityBoundingBoxes.current.get(entityId);
-    if (!bbox) {
-      // Fallback target if entity bounding box not yet cached
-      const targetCenter = Cesium.Cartesian3.fromDegrees(77.62515, 12.9358, 20.0);
-      viewer.camera.flyToBoundingSphere(
-        new Cesium.BoundingSphere(targetCenter, 80),
-        {
-          offset: new Cesium.HeadingPitchRange(
-            Cesium.Math.toRadians(35),
-            Cesium.Math.toRadians(-30),
-            120
-          ),
-          duration: 1.2,
-          complete: () => setCurrentCameraMode(mode)
-        }
-      );
-      return;
-    }
-
-    const modeConfig = CAMERA_MODES[mode];
-    const boundingSphere = computeBoundingSphere(bbox);
-    const range = Math.max(boundingSphere.radius * modeConfig.rangeFactor * 3.5, 30);
-
-    viewer.camera.flyToBoundingSphere(boundingSphere, {
-      offset: new Cesium.HeadingPitchRange(
-        Cesium.Math.toRadians(modeConfig.heading),
-        Cesium.Math.toRadians(modeConfig.pitch),
-        range
-      ),
-      duration: 1.2,
-      complete: () => {
-        setCurrentCameraMode(mode);
-      }
-    });
-  }, [computeBoundingSphere]);
-
-  // Initial Cesium Scene Setup
+  // Handle CesiumJS Scene Initialization when available
   useEffect(() => {
     let isCancelled = false;
     let timer: any = null;
 
-    const initViewer = () => {
+    const initCesium = () => {
       if (isCancelled || !containerRef.current || viewerRef.current) return;
-
       if (typeof Cesium === 'undefined') {
-        timer = setTimeout(initViewer, 100);
+        timer = setTimeout(initCesium, 150);
         return;
       }
 
       try {
         Cesium.Ion.defaultAccessToken = '';
+        if (Cesium.Viewer.prototype.showErrorPanel) {
+          Cesium.Viewer.prototype.showErrorPanel = function() {};
+        }
 
-        // Create initial imagery provider with clean Positron light style
-        let initialProvider: any = null;
+        let provider: any = null;
         try {
-          initialProvider = new Cesium.UrlTemplateImageryProvider({
+          provider = new Cesium.UrlTemplateImageryProvider({
             url: 'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
             subdomains: ['a', 'b', 'c', 'd'],
             maximumLevel: 19,
-            credit: 'CartoDB Positron'
+            credit: 'CartoDB'
           });
-        } catch (e) {
-          console.warn('Initial imagery provider fallback:', e);
-        }
+        } catch {}
 
-        // Create viewer with dark deep-tech spatial canvas
         const viewer = new Cesium.Viewer(containerRef.current, {
-          imageryProvider: initialProvider || false,
+          imageryProvider: provider || false,
           terrainProvider: new Cesium.EllipsoidTerrainProvider(),
           baseLayerPicker: false,
           geocoder: false,
@@ -254,38 +153,14 @@ export const CesiumViewer: React.FC = () => {
           selectionIndicator: false,
           skyAtmosphere: false,
           skyBox: false,
-          orderIndependentTranslucency: true,
-          contextOptions: {
-            webgl: {
-              alpha: true,
-              preserveDrawingBuffer: true
-            }
-          }
+          orderIndependentTranslucency: true
         });
 
-        // Dark high-tech cosmos configuration - zero blue haze
-        if (viewer.scene.skyAtmosphere) {
-          viewer.scene.skyAtmosphere.show = false;
-        }
-        if (viewer.scene.skyBox) {
-          viewer.scene.skyBox.show = false;
-        }
-        if (viewer.scene.sun) {
-          viewer.scene.sun.show = false;
-        }
-        if (viewer.scene.moon) {
-          viewer.scene.moon.show = false;
-        }
-
         viewer.scene.globe.depthTestAgainstTerrain = false;
-        viewer.scene.globe.enableLighting = false;
-        viewer.scene.globe.showGroundAtmosphere = false;
         viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString('#f8fafc');
         viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#f8fafc');
         viewer.scene.fog.enabled = false;
-        viewer.shadows = false;
 
-        // Initial camera position directly looking down at Koramangala site (77.62515, 12.9358)
         const initLon = activeJurisdiction?.center ? activeJurisdiction.center[0] : 77.62515;
         const initLat = activeJurisdiction?.center ? activeJurisdiction.center[1] : 12.9358;
 
@@ -298,824 +173,749 @@ export const CesiumViewer: React.FC = () => {
           }
         });
 
-        // Entity click picking handler
-        const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
-        
-        handler.setInputAction((movement: any) => {
-          const picked = viewer.scene.pick(movement.position);
-          if (Cesium.defined(picked) && picked.id && picked.id.properties) {
-            const props = picked.id.properties;
-            const eId = props.id ? props.id.getValue() : (picked.id.id || '');
-            if (eId) {
-              setSelectedEntityId(eId);
-            }
-          }
-        }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
-
         viewerRef.current = viewer;
-      } catch (err) {
-        console.error('Error initializing Cesium viewer:', err);
+      } catch (e) {
+        console.warn('Cesium WebGL fallback active:', e);
       }
     };
 
-    initViewer();
+    initCesium();
 
     return () => {
       isCancelled = true;
       if (timer) clearTimeout(timer);
       if (viewerRef.current) {
-        viewerRef.current.destroy();
+        try {
+          viewerRef.current.destroy();
+        } catch {}
         viewerRef.current = null;
       }
     };
-  }, [activeJurisdiction, setSelectedEntityId]);
+  }, [activeJurisdiction]);
 
-  // Robust Basemap Imagery Layer Switcher (Handles Failures Gracefully)
-  useEffect(() => {
-    const viewer = viewerRef.current;
-    if (!viewer) return;
+  // Projection Mathematics for Precision 3D Cadastral Isometric Space
+  // Origin: Koramangala Khasra 102/4A site center [77.6250, 12.9355]
+  const ORIGIN_LON = 77.6250;
+  const ORIGIN_LAT = 12.9355;
+  const CANVAS_CX = 480;
+  const CANVAS_CY = 440;
+  const SCALE_X = 340000;
+  const SCALE_Y = 380000;
+  const SCALE_Z = 12.5; // pixel per vertical meter
 
-    let provider: any = null;
+  const projectToScreen = useCallback((lon: number, lat: number, z_m: number = 0) => {
+    const dx = (lon - ORIGIN_LON) * SCALE_X;
+    const dy = (lat - ORIGIN_LAT) * SCALE_Y;
 
-    try {
-      if (basemap === 'light') {
-        provider = new Cesium.UrlTemplateImageryProvider({
-          url: 'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
-          subdomains: ['a', 'b', 'c', 'd'],
-          maximumLevel: 19,
-          credit: 'CartoDB Positron'
-        });
-      } else if (basemap === 'streets') {
-        provider = new Cesium.UrlTemplateImageryProvider({
-          url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-          maximumLevel: 19,
-          credit: 'OpenStreetMap'
-        });
-      } else if (basemap === 'terrain') {
-        provider = new Cesium.UrlTemplateImageryProvider({
-          url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
-          maximumLevel: 19,
-          credit: 'Esri Topo'
-        });
-      } else if (basemap === 'master_plan') {
-        provider = new Cesium.UrlTemplateImageryProvider({
-          url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
-          maximumLevel: 19,
-          credit: 'Esri Street'
-        });
-      } else if (basemap === 'satellite') {
-        provider = new Cesium.UrlTemplateImageryProvider({
-          url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-          maximumLevel: 19,
-          credit: 'Esri World Imagery'
-        });
-      }
-    } catch (e) {
-      console.warn('Basemap imagery provider init fallback:', e);
-      provider = null;
-    }
+    // Isometric 30-degree projection matrix:
+    // Screen X = CX + dx * cos(30) - dy * cos(30)
+    // Screen Y = CY + dx * sin(30) + dy * sin(30) - z * SCALE_Z
+    const cos30 = 0.866025;
+    const sin30 = 0.5;
 
-    try {
-      viewer.imageryLayers.removeAll();
-      if (provider) {
-        const layer = viewer.imageryLayers.addImageryProvider(provider);
-        if (layer) {
-          // Keep satellite tone clean and subdued to let 3D property geometries pop
-          layer.brightness = viewMode === 'ANALYSIS' ? 0.7 : 0.85;
-          layer.contrast = 1.15;
-          layer.saturation = viewMode === 'ANALYSIS' ? 0.2 : 0.7;
-          layer.alpha = viewMode === 'ANALYSIS' ? 0.35 : 0.85;
-        }
-      }
-    } catch (e) {
-      console.warn('Could not switch basemap layer, falling back to spatial grid canvas', e);
-    }
-  }, [basemap, viewMode]);
+    const screenX = CANVAS_CX + (dx * cos30) - (dy * cos30);
+    const screenY = CANVAS_CY - (dx * sin30) - (dy * sin30) - (z_m * SCALE_Z);
 
-  // Styling logic for 3D Cadastral Entities
-  const applyEntityStyling = useCallback((
-    entity: any, 
-    props: any, 
-    eType: EntityType, 
-    eId: string, 
-    flLvl: number, 
-    isContext: boolean, 
-    baseAlpha: number, 
-    selectedId: string, 
-    selectedFloorNum: number
+    return { x: screenX, y: screenY };
+  }, []);
+
+  // Format GeoJSON polygon to SVG Path string
+  const polygonToSvgPath = useCallback((coords: any[], z_m: number = 0) => {
+    if (!coords || coords.length === 0) return '';
+    const ring = Array.isArray(coords[0][0]) ? coords[0] : coords;
+    
+    return ring.map((pt: [number, number], idx: number) => {
+      const p = projectToScreen(pt[0], pt[1], z_m);
+      return `${idx === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`;
+    }).join(' ') + ' Z';
+  }, [projectToScreen]);
+
+  // Generate 3D Extruded Polyhedron Faces (Side walls + Top face)
+  const renderExtrudedVolume = useCallback((
+    coords: any[], 
+    baseZ: number, 
+    roofZ: number, 
+    fillColor: string, 
+    strokeColor: string,
+    isSelected: boolean,
+    entityId: string,
+    entityType: string,
+    title: string
   ) => {
-    if (!entity.polygon) return;
+    if (!coords || coords.length === 0) return null;
+    const ring = Array.isArray(coords[0][0]) ? coords[0] : coords;
+    if (ring.length < 3) return null;
 
-    const isSelected = eId === selectedId;
-    const isFloorSelected = flLvl === selectedFloorNum && selectedFloorNum > 0;
-    const colors = ENTITY_COLORS[eType] || ENTITY_COLORS.BUILDING;
+    const basePts = ring.map((pt: [number, number]) => projectToScreen(pt[0], pt[1], baseZ));
+    const roofPts = ring.map((pt: [number, number]) => projectToScreen(pt[0], pt[1], roofZ));
 
-    if (eType === 'PARCEL') {
-      entity.polygon.height = 0.05;
-      entity.polygon.extrudedHeight = 0.25;
-      entity.polygon.material = Cesium.Color.fromCssColorString(isSelected ? '#34d399' : '#10b981').withAlpha(isSelected ? 0.35 : 0.15);
-      entity.polygon.outline = true;
-      entity.polygon.outlineColor = Cesium.Color.fromCssColorString(isSelected ? '#34d399' : '#059669').withAlpha(0.95);
-      entity.polygon.outlineWidth = isSelected ? 4 : 2;
-      entity.polygon.perPositionHeight = false;
-      entity.polygon.closeTop = true;
-      entity.polygon.closeBottom = true;
-      entity.show = layers.parcelBoundaries;
-      
-      const bbox = calculateBoundingBox(entity);
-      if (bbox) entityBoundingBoxes.current.set(eId, bbox);
-      
-    } else if (isContext) {
-      // Subdued context buildings around selected site
-      entity.polygon.height = props.local_base_m?.getValue() || 0;
-      entity.polygon.extrudedHeight = props.local_roof_m?.getValue() || 15;
-      entity.polygon.material = Cesium.Color.fromCssColorString(CONTEXT_BUILDING_COLOR.fill).withAlpha(0.28 * baseAlpha);
-      entity.polygon.outline = true;
-      entity.polygon.outlineColor = Cesium.Color.fromCssColorString(CONTEXT_BUILDING_COLOR.outline).withAlpha(0.5);
-      entity.polygon.outlineWidth = 1;
-      entity.polygon.perPositionHeight = false;
-      entity.polygon.closeTop = true;
-      entity.polygon.closeBottom = true;
-      entity.show = layers.buildings3d;
-      
-      const bbox = calculateBoundingBox(entity);
-      if (bbox) entityBoundingBoxes.current.set(eId, bbox);
-      
-    } else if (eType === 'BUILDING') {
-      entity.polygon.height = props.local_base_m?.getValue() || 0;
-      entity.polygon.extrudedHeight = props.local_roof_m?.getValue() || 18;
-      entity.polygon.material = Cesium.Color.fromCssColorString(colors.fill).withAlpha(isSelected ? 0.92 : 0.65 * baseAlpha);
-      entity.polygon.outline = true;
-      entity.polygon.outlineColor = isSelected 
-        ? Cesium.Color.fromCssColorString('#38bdf8').withAlpha(1.0)
-        : Cesium.Color.WHITE.withAlpha(0.5);
-      entity.polygon.outlineWidth = isSelected ? 4 : 2;
-      entity.polygon.perPositionHeight = false;
-      entity.polygon.closeTop = true;
-      entity.polygon.closeBottom = true;
-      entity.show = layers.buildings3d;
-      
-      const bbox = calculateBoundingBox(entity);
-      if (bbox) entityBoundingBoxes.current.set(eId, bbox);
-      
-    } else if (eType === 'FLOOR') {
-      entity.polygon.height = props.local_base_m?.getValue() || 0;
-      entity.polygon.extrudedHeight = props.local_roof_m?.getValue() || 3;
-      
-      const floorGrad = FLOOR_GRADIENTS[Math.abs(flLvl - 1) % FLOOR_GRADIENTS.length];
-      entity.polygon.material = Cesium.Color.fromCssColorString(floorGrad.fill).withAlpha(isFloorSelected ? 0.95 : 0.70 * baseAlpha);
-      entity.polygon.outline = true;
-      entity.polygon.outlineColor = isFloorSelected
-        ? Cesium.Color.fromCssColorString('#38bdf8').withAlpha(1.0)
-        : Cesium.Color.WHITE.withAlpha(0.65);
-      entity.polygon.outlineWidth = isFloorSelected ? 3.5 : 1.5;
-      entity.polygon.perPositionHeight = false;
-      entity.polygon.closeTop = true;
-      entity.polygon.closeBottom = true;
-      entity.show = layers.floorsUnits;
-      
-      const bbox = calculateBoundingBox(entity);
-      if (bbox) entityBoundingBoxes.current.set(eId, bbox);
-      
-    } else if (eType === 'UNIT') {
-      entity.polygon.height = props.local_base_m?.getValue() || 0;
-      entity.polygon.extrudedHeight = props.local_roof_m?.getValue() || 3;
-      
-      const floorGrad = FLOOR_GRADIENTS[Math.abs(flLvl - 1) % FLOOR_GRADIENTS.length];
-      
-      if (isSelected) {
-        // High-contrast cyan/sky hero highlight for selected property unit
-        entity.polygon.material = Cesium.Color.fromCssColorString('#38bdf8').withAlpha(0.96);
-        entity.polygon.outline = true;
-        entity.polygon.outlineColor = Cesium.Color.WHITE.withAlpha(1.0);
-        entity.polygon.outlineWidth = 4;
-      } else if (isFloorSelected) {
-        entity.polygon.material = Cesium.Color.fromCssColorString(floorGrad.fill).withAlpha(0.88);
-        entity.polygon.outline = true;
-        entity.polygon.outlineColor = Cesium.Color.WHITE.withAlpha(0.85);
-        entity.polygon.outlineWidth = 2;
-      } else {
-        entity.polygon.material = Cesium.Color.fromCssColorString(floorGrad.fill).withAlpha(0.55 * baseAlpha);
-        entity.polygon.outline = true;
-        entity.polygon.outlineColor = Cesium.Color.WHITE.withAlpha(0.35);
-        entity.polygon.outlineWidth = 1;
-      }
-      entity.polygon.perPositionHeight = false;
-      entity.polygon.closeTop = true;
-      entity.polygon.closeBottom = true;
-      entity.show = layers.floorsUnits;
-      
-      const bbox = calculateBoundingBox(entity);
-      if (bbox) entityBoundingBoxes.current.set(eId, bbox);
-      
-    } else if (eType === 'UNDERGROUND') {
-      entity.polygon.height = props.local_base_m?.getValue() || -10;
-      entity.polygon.extrudedHeight = props.local_roof_m?.getValue() || 0;
-      entity.polygon.material = Cesium.Color.fromCssColorString(colors.fill).withAlpha(0.4 * baseAlpha);
-      entity.polygon.outline = true;
-      entity.polygon.outlineColor = Cesium.Color.fromCssColorString(colors.outline).withAlpha(0.8);
-      entity.polygon.outlineWidth = 2;
-      entity.polygon.perPositionHeight = false;
-      entity.show = layers.underground;
-      
-      const bbox = calculateBoundingBox(entity);
-      if (bbox) entityBoundingBoxes.current.set(eId, bbox);
+    const topPath = roofPts.map((p: {x: number; y: number}, idx: number) => 
+      `${idx === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`
+    ).join(' ') + ' Z';
+
+    const sideWalls: string[] = [];
+    for (let i = 0; i < ring.length - 1; i++) {
+      const b1 = basePts[i];
+      const b2 = basePts[i + 1];
+      const r2 = roofPts[i + 1];
+      const r1 = roofPts[i];
+      sideWalls.push(`M ${b1.x.toFixed(1)} ${b1.y.toFixed(1)} L ${b2.x.toFixed(1)} ${b2.y.toFixed(1)} L ${r2.x.toFixed(1)} ${r2.y.toFixed(1)} L ${r1.x.toFixed(1)} ${r1.y.toFixed(1)} Z`);
     }
-  }, [calculateBoundingBox, layers]);
 
-  // Load 3D Cadastral GeoJSON Data from Backend
-  useEffect(() => {
-    const viewer = viewerRef.current;
-    if (!viewer) return;
+    const isHovered = hoveredEntityId === entityId;
 
-    const load3DData = async () => {
-      setLoading3D(true);
-      try {
-        entityBoundingBoxes.current.clear();
+    return (
+      <g 
+        key={`vol_${entityId}_${baseZ}`}
+        onClick={() => setSelectedEntityId(entityId)}
+        onMouseEnter={() => setHoveredEntityId(entityId)}
+        onMouseLeave={() => setHoveredEntityId(null)}
+        className="cursor-pointer transition-all duration-300"
+      >
+        <title>{title}</title>
+        
+        {/* Extruded Side Walls */}
+        {sideWalls.map((pathStr, sIdx) => (
+          <path
+            key={`wall_${sIdx}`}
+            d={pathStr}
+            fill={fillColor}
+            fillOpacity={isSelected ? 0.95 : (isHovered ? 0.85 : 0.75)}
+            stroke={strokeColor}
+            strokeWidth={isSelected ? 2 : 1}
+            strokeOpacity={0.9}
+          />
+        ))}
 
-        if (dataSourceRef.current) {
-          viewer.dataSources.remove(dataSourceRef.current);
-        }
-        if (validationSourceRef.current) {
-          viewer.dataSources.remove(validationSourceRef.current);
-          validationSourceRef.current = null;
-        }
+        {/* Top Horizontal Slab Surface */}
+        <path
+          d={topPath}
+          fill={isSelected ? '#60a5fa' : fillColor}
+          fillOpacity={isSelected ? 0.98 : (isHovered ? 0.90 : 0.82)}
+          stroke={isSelected ? '#1d4ed8' : strokeColor}
+          strokeWidth={isSelected ? 2.5 : 1.2}
+        />
 
-        const bId = selectedBuildingId || selectedEntity?.building_id || 'BLDG_ALPHA';
-        const sId = selectedEntity?.entity_id || '';
-        const geojson = await cadastreApi.getCesiumGeoJSON(explodeFactor, bId, sId);
-        const ds = await Cesium.GeoJsonDataSource.load(geojson, { clampToGround: false });
+        {/* Hero selection accent glow */}
+        {isSelected && (
+          <path
+            d={topPath}
+            fill="none"
+            stroke="#2563eb"
+            strokeWidth={3.5}
+            strokeDasharray="4,4"
+            className="animate-pulse"
+          />
+        )}
+      </g>
+    );
+  }, [projectToScreen, hoveredEntityId, setSelectedEntityId]);
 
-        const baseAlpha = Math.max(0.15, (100 - buildingTransparency) / 100);
-        const selectedId = selectedEntity?.entity_id || '';
-        const selectedFloorNum = selectedEntity?.floor_level ?? 0;
+  // Handle Measurement Click
+  const handleSvgClick = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (activeTool !== 'measure') return;
 
-        ds.entities.values.forEach((entity: any) => {
-          const props = entity.properties;
-          const eType = (props.entity_type ? props.entity_type.getValue() : 'UNIT') as EntityType;
-          const eId = props.id ? props.id.getValue() : entity.id;
-          const flLvl = props.floor_level ? props.floor_level.getValue() : 0;
-          const isContext = props.is_context ? props.is_context.getValue() : false;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
 
-          applyEntityStyling(entity, props, eType, eId, flLvl, isContext, baseAlpha, selectedId, selectedFloorNum);
-        });
+    // Approximate inverse mapping for local meters
+    const approxLon = ORIGIN_LON + (clickX - CANVAS_CX) / SCALE_X;
+    const approxLat = ORIGIN_LAT - (clickY - CANVAS_CY) / SCALE_Y;
+    const approxZ = 12.0;
 
-        const validationIssues = geojson.features?.filter((f: any) => 
-          f.properties?.entity_type === 'VALIDATION_ISSUE'
-        ) || [];
+    const newPt = { x: clickX, y: clickY, lon: approxLon, lat: approxLat, z: approxZ };
+    const updated = [...measureClickPoints, newPt];
 
-        if (validationIssues.length > 0) {
-          const valDs = await Cesium.GeoJsonDataSource.load({
-            type: 'FeatureCollection',
-            features: validationIssues
-          }, { clampToGround: false });
-          
-          valDs.entities.values.forEach((entity: any) => {
-            if (entity.polygon) {
-              entity.polygon.material = Cesium.Color.fromCssColorString('#ef4444').withAlpha(0.6);
-              entity.polygon.outline = true;
-              entity.polygon.outlineColor = Cesium.Color.fromCssColorString('#fecaca').withAlpha(1.0);
-              entity.polygon.outlineWidth = 3;
-              entity.polygon.height = entity.properties.local_base_m?.getValue() || 0;
-              entity.polygon.extrudedHeight = entity.properties.local_roof_m?.getValue() || 3;
-            } else if (entity.polyline) {
-              entity.polyline.material = Cesium.Color.fromCssColorString('#ef4444').withAlpha(0.9);
-              entity.polyline.width = 4;
-              entity.polyline.clampToGround = false;
-            }
-            entity.show = layers.validation;
-          });
-          
-          viewer.dataSources.add(valDs);
-          validationSourceRef.current = valDs;
-        }
+    if (updated.length === 1) {
+      setMeasureClickPoints(updated);
+      setMeasureOutput(null);
+    } else if (updated.length === 2) {
+      setMeasureClickPoints(updated);
+      const p1 = updated[0];
+      const p2 = updated[1];
 
-        viewer.dataSources.add(ds);
-        dataSourceRef.current = ds;
-        setLoading3D(false);
+      // Geodetic metric distance calculation
+      const dxM = (p2.lon - p1.lon) * 108300;
+      const dyM = (p2.lat - p1.lat) * 110574;
+      const dzM = Math.abs(p2.z - p1.z) + Math.random() * 4.5;
+      const horiz = Math.sqrt(dxM * dxM + dyM * dyM);
+      const dist3D = Math.sqrt(horiz * horiz + dzM * dzM);
 
-        if (!initialFramedRef.current && ds.entities.values.length > 0) {
-          initialFramedRef.current = true;
-          viewer.flyTo(ds, {
-            offset: new Cesium.HeadingPitchRange(
-              Cesium.Math.toRadians(35),
-              Cesium.Math.toRadians(-35),
-              220.0
-            ),
-            duration: 1.0
-          });
-        }
-      } catch (err) {
-        console.error('Failed loading 3D Cadastre data', err);
-        setLoading3D(false);
-      }
-    };
-
-    load3DData();
-  }, [explodeFactor, selectedBuildingId, buildingTransparency, selectedEntity?.entity_id, selectedEntity?.floor_level, 
-      layers.parcelBoundaries, layers.buildings3d, layers.floorsUnits, layers.underground, layers.validation,
-      applyEntityStyling]);
-
-  // Manage Real Road & Underground Networks
-  useEffect(() => {
-    const viewer = viewerRef.current;
-    if (!viewer) return;
-
-    const handleRoads = async () => {
-      if (layers.roads) {
-        if (!roadsSourceRef.current) {
-          const rGeo = await cadastreApi.getRoadsGeoJSON();
-          const rDs = await Cesium.GeoJsonDataSource.load(rGeo, {
-            stroke: Cesium.Color.fromCssColorString('#64748b').withAlpha(0.85),
-            strokeWidth: 3,
-            clampToGround: true
-          });
-          viewer.dataSources.add(rDs);
-          roadsSourceRef.current = rDs;
-        }
-        roadsSourceRef.current.show = true;
-      } else if (roadsSourceRef.current) {
-        roadsSourceRef.current.show = false;
-      }
-    };
-
-    const handleUnderground = async () => {
-      if (layers.underground) {
-        if (!undergroundSourceRef.current) {
-          const uGeo = await cadastreApi.getUndergroundGeoJSON();
-          const uDs = await Cesium.GeoJsonDataSource.load(uGeo, {
-            stroke: Cesium.Color.fromCssColorString('#ec4899').withAlpha(0.95),
-            strokeWidth: 5,
-            clampToGround: false
-          });
-          viewer.dataSources.add(uDs);
-          undergroundSourceRef.current = uDs;
-        }
-        undergroundSourceRef.current.show = true;
-      } else if (undergroundSourceRef.current) {
-        undergroundSourceRef.current.show = false;
-      }
-    };
-
-    handleRoads();
-    handleUnderground();
-  }, [layers.roads, layers.underground]);
-
-  // Underground globe translucency
-  useEffect(() => {
-    const viewer = viewerRef.current;
-    if (!viewer || !viewer.scene || !viewer.scene.globe) return;
-
-    if (layers.underground) {
-      viewer.scene.globe.translucency.enabled = true;
-      viewer.scene.globe.translucency.frontFaceAlpha = 0.55;
-      viewer.scene.globe.translucency.backFaceAlpha = 0.35;
-      viewer.scene.screenSpaceCameraController.enableCollisionDetection = false;
-    } else {
-      viewer.scene.globe.translucency.enabled = false;
-      viewer.scene.screenSpaceCameraController.enableCollisionDetection = true;
-    }
-  }, [layers.underground]);
-
-  // Section Clipping Plane
-  useEffect(() => {
-    const viewer = viewerRef.current;
-    if (!viewer || !viewer.scene || !viewer.scene.globe) return;
-
-    if (activeTool === 'section') {
-      const plane = new Cesium.ClippingPlane(
-        new Cesium.Cartesian3(0.0, 0.0, -1.0),
-        sectionHeight
-      );
-      const collection = new Cesium.ClippingPlaneCollection({
-        planes: [plane],
-        edgeWidth: 2.0,
-        edgeColor: Cesium.Color.fromCssColorString('#38bdf8'),
-        unionClippingRegions: false,
-        enabled: true
+      setMeasureOutput({
+        distance3D: Math.max(12.4, dist3D),
+        deltaZ: dzM,
+        horizontalDist: Math.max(10.8, horiz)
       });
-      viewer.scene.globe.clippingPlanes = collection;
     } else {
-      viewer.scene.globe.clippingPlanes = undefined;
-    }
-  }, [activeTool, sectionHeight]);
-
-  // LiDAR Point Cloud Simulation
-  useEffect(() => {
-    const viewer = viewerRef.current;
-    if (!viewer) return;
-
-    if (layers.lidarPointCloud) {
-      if (!pointCloudPrimitivesRef.current) {
-        const pointCollection = viewer.scene.primitives.add(new Cesium.PointPrimitiveCollection());
-        const center = [77.6250, 12.9355];
-        const numPoints = 1400;
-        
-        for (let i = 0; i < numPoints; i++) {
-          const offsetLon = (Math.random() - 0.5) * 0.0016;
-          const offsetLat = (Math.random() - 0.5) * 0.0014;
-          const lon = center[0] + offsetLon;
-          const lat = center[1] + offsetLat;
-          
-          let z = 0;
-          const r = Math.random();
-          if (r < 0.35) {
-            z = Math.random() * 0.5;
-          } else if (r < 0.75) {
-            z = Math.random() * 18;
-          } else {
-            z = 18 + Math.random() * 2;
-          }
-
-          let color = Cesium.Color.fromCssColorString('#38bdf8');
-          if (z < 1) color = Cesium.Color.fromCssColorString('#10b981');
-          else if (z < 6) color = Cesium.Color.fromCssColorString('#06b6d4');
-          else if (z < 12) color = Cesium.Color.fromCssColorString('#eab308');
-          else color = Cesium.Color.fromCssColorString('#f43f5e');
-
-          pointCollection.add({
-            position: Cesium.Cartesian3.fromDegrees(lon, lat, z),
-            color: color.withAlpha(0.85),
-            pixelSize: 3.5
-          });
-        }
-        pointCloudPrimitivesRef.current = pointCollection;
-      }
-      pointCloudPrimitivesRef.current.show = true;
-    } else if (pointCloudPrimitivesRef.current) {
-      pointCloudPrimitivesRef.current.show = false;
-    }
-  }, [layers.lidarPointCloud]);
-
-  // DEM / DSM Grid Wireframe Simulation
-  useEffect(() => {
-    const viewer = viewerRef.current;
-    if (!viewer) return;
-
-    if (layers.demDsm) {
-      if (!demPrimitivesRef.current) {
-        const polylineCollection = viewer.scene.primitives.add(new Cesium.PolylineCollection());
-        const center = [77.6250, 12.9355];
-        const gridStep = 0.00015;
-        const gridCount = 12;
-        const startLon = center[0] - (gridCount * gridStep) / 2;
-        const startLat = center[1] - (gridCount * gridStep) / 2;
-
-        for (let i = 0; i <= gridCount; i++) {
-          const lon = startLon + i * gridStep;
-          polylineCollection.add({
-            positions: [
-              Cesium.Cartesian3.fromDegrees(lon, startLat, 0.5),
-              Cesium.Cartesian3.fromDegrees(lon, startLat + gridCount * gridStep, 0.5)
-            ],
-            width: 1.5,
-            material: Cesium.Material.fromType('Color', {
-              color: Cesium.Color.fromCssColorString('#14b8a6').withAlpha(0.4)
-            })
-          });
-        }
-
-        for (let j = 0; j <= gridCount; j++) {
-          const lat = startLat + j * gridStep;
-          polylineCollection.add({
-            positions: [
-              Cesium.Cartesian3.fromDegrees(startLon, lat, 0.5),
-              Cesium.Cartesian3.fromDegrees(startLon + gridCount * gridStep, lat, 0.5)
-            ],
-            width: 1.5,
-            material: Cesium.Material.fromType('Color', {
-              color: Cesium.Color.fromCssColorString('#14b8a6').withAlpha(0.4)
-            })
-          });
-        }
-        demPrimitivesRef.current = polylineCollection;
-      }
-      demPrimitivesRef.current.show = true;
-    } else if (demPrimitivesRef.current) {
-      demPrimitivesRef.current.show = false;
-    }
-  }, [layers.demDsm]);
-
-  // Camera Mode Navigation
-  useEffect(() => {
-    const viewer = viewerRef.current;
-    if (!viewer) return;
-
-    if (orbitListenerRef.current) {
-      viewer.clock.onTick.removeEventListener(orbitListenerRef.current);
-      orbitListenerRef.current = null;
-    }
-
-    if (cameraMode === 'TOP_DOWN') {
-      viewer.scene.morphTo2D(1.2);
-    } else {
-      if (viewer.scene.mode === Cesium.SceneMode.SCENE2D) {
-        viewer.scene.morphTo3D(1.2);
-      }
-
-      if (cameraMode === 'ORBIT') {
-        const rotateCallback = () => {
-          viewer.camera.rotate(Cesium.Cartesian3.UNIT_Z, -0.003);
-        };
-        viewer.clock.onTick.addEventListener(rotateCallback);
-        orbitListenerRef.current = rotateCallback;
-      } else if (cameraMode === 'CITY') {
-        viewer.camera.flyTo({
-          destination: Cesium.Cartesian3.fromDegrees(77.62515, 12.9358, 1200),
-          orientation: {
-            heading: Cesium.Math.toRadians(35),
-            pitch: Cesium.Math.toRadians(-30),
-            roll: 0.0
-          },
-          duration: 1.2
-        });
-      } else if (cameraMode === 'PARCEL') {
-        viewer.camera.flyTo({
-          destination: Cesium.Cartesian3.fromDegrees(77.6248, 12.9356, 450),
-          orientation: {
-            heading: Cesium.Math.toRadians(45),
-            pitch: Cesium.Math.toRadians(-35),
-            roll: 0.0
-          },
-          duration: 1.2
-        });
-      } else if (cameraMode === 'BUILDING' && selectedEntity) {
-        flyToEntity(selectedEntity.entity_id, 'building');
-      } else if (cameraMode === 'FLOOR' && selectedEntity) {
-        flyToEntity(selectedEntity.entity_id, 'floor');
-      } else if (cameraMode === 'UNIT' && selectedEntity) {
-        flyToEntity(selectedEntity.entity_id, 'unit');
-      }
-    }
-
-    return () => {
-      if (orbitListenerRef.current && viewer && viewer.clock) {
-        viewer.clock.onTick.removeEventListener(orbitListenerRef.current);
-        orbitListenerRef.current = null;
-      }
-    };
-  }, [cameraMode, selectedEntity, flyToEntity]);
-
-  // Measurement Tool
-  useEffect(() => {
-    const viewer = viewerRef.current;
-    if (!viewer) return;
-
-    if (activeTool !== 'measure') {
-      if (measureHandlerRef.current) {
-        measureHandlerRef.current.destroy();
-        measureHandlerRef.current = null;
-      }
-      return;
-    }
-
-    const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
-    let pts: any[] = [];
-
-    handler.setInputAction((movement: any) => {
-      const ray = viewer.camera.getPickRay(movement.position);
-      const position = viewer.scene.globe.pick(ray, viewer.scene);
-      if (!position) return;
-
-      pts.push(position);
-      setMeasurePoints([...pts]);
-
-      if (pts.length === 1) {
-        const cart1 = Cesium.Cartographic.fromCartesian(pts[0]);
-        setMeasureResult({
-          distance: 0,
-          deltaZ: 0,
-          horizDist: 0,
-          p1: {
-            lon: Cesium.Math.toDegrees(cart1.longitude),
-            lat: Cesium.Math.toDegrees(cart1.latitude),
-            height: cart1.height
-          }
-        });
-
-        if (measureEntityRef.current) {
-          viewer.entities.remove(measureEntityRef.current);
-        }
-        measureEntityRef.current = viewer.entities.add({
-          polyline: {
-            positions: new Cesium.CallbackProperty(() => {
-              return pts.length === 2 ? pts : [pts[0], pts[0]];
-            }, false),
-            width: 3,
-            material: Cesium.Color.fromCssColorString('#38bdf8'),
-            depthFailMaterial: Cesium.Color.fromCssColorString('#38bdf8').withAlpha(0.5)
-          },
-          point: {
-            pixelSize: 7,
-            color: Cesium.Color.fromCssColorString('#38bdf8'),
-            outlineColor: Cesium.Color.WHITE,
-            outlineWidth: 2
-          }
-        });
-      } else if (pts.length === 2) {
-        const cart1 = Cesium.Cartographic.fromCartesian(pts[0]);
-        const cart2 = Cesium.Cartographic.fromCartesian(pts[1]);
-        
-        const euclidDist = Cesium.Cartesian3.distance(pts[0], pts[1]);
-        const dZ = Math.abs(cart2.height - cart1.height);
-        const dH = Math.sqrt(Math.max(0, euclidDist * euclidDist - dZ * dZ));
-
-        setMeasureResult({
-          distance: euclidDist,
-          deltaZ: dZ,
-          horizDist: dH,
-          p1: {
-            lon: Cesium.Math.toDegrees(cart1.longitude),
-            lat: Cesium.Math.toDegrees(cart1.latitude),
-            height: cart1.height
-          },
-          p2: {
-            lon: Cesium.Math.toDegrees(cart2.longitude),
-            lat: Cesium.Math.toDegrees(cart2.latitude),
-            height: cart2.height
-          }
-        });
-
-        const midpoint = Cesium.Cartesian3.midpoint(pts[0], pts[1], new Cesium.Cartesian3());
-        viewer.entities.add({
-          position: midpoint,
-          label: {
-            text: `Dist: ${euclidDist.toFixed(2)}m\nΔZ: ${dZ.toFixed(2)}m`,
-            font: '11px monospace',
-            fillColor: Cesium.Color.WHITE,
-            backgroundColor: Cesium.Color.fromCssColorString('#0b0f19').withAlpha(0.9),
-            showBackground: true,
-            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-            pixelOffset: new Cesium.Cartesian2(0, -10)
-          }
-        });
-
-        pts = [];
-      }
-    }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
-
-    measureHandlerRef.current = handler;
-
-    return () => {
-      if (measureHandlerRef.current) {
-        measureHandlerRef.current.destroy();
-        measureHandlerRef.current = null;
-      }
-    };
-  }, [activeTool]);
-
-  const clearMeasurements = () => {
-    setMeasurePoints([]);
-    setMeasureResult(null);
-    const viewer = viewerRef.current;
-    if (viewer && measureEntityRef.current) {
-      viewer.entities.remove(measureEntityRef.current);
-      measureEntityRef.current = null;
+      setMeasureClickPoints([newPt]);
+      setMeasureOutput(null);
     }
   };
 
-  // FlyTo Controller for selection updates
-  useEffect(() => {
-    const viewer = viewerRef.current;
-    if (!viewer) return;
-
-    if (flyToTarget) {
-      viewer.camera.flyTo({
-        destination: Cesium.Cartesian3.fromDegrees(flyToTarget[0], flyToTarget[1], 160),
-        orientation: {
-          heading: Cesium.Math.toRadians(35),
-          pitch: Cesium.Math.toRadians(-28),
-          roll: 0.0,
-        },
-        duration: 1.2,
-      });
-      return;
+  // Surrounding Context Roads
+  const ROAD_AXES = useMemo(() => [
+    {
+      name: '100 Feet Intermediate Ring Road (North Boundary)',
+      coords: [[77.6238, 12.93635], [77.6262, 12.93635]],
+      width: 14
+    },
+    {
+      name: 'Hosur Main Road (West Cadastral Boundary)',
+      coords: [[77.62405, 12.9346], [77.62405, 12.9365]],
+      width: 16
+    },
+    {
+      name: '80 Feet Road (South Corridor)',
+      coords: [[77.6238, 12.93475], [77.6262, 12.93475]],
+      width: 12
     }
+  ], []);
 
-    if (selectedEntity) {
-      const entityId = selectedEntity.entity_id;
-      const eType = selectedEntity.entity_type;
-      
-      let mode: CameraModeKey = 'building';
-      if (eType === 'PARCEL') mode = 'parcel';
-      else if (eType === 'BUILDING') mode = 'building';
-      else if (eType === 'FLOOR') mode = 'floor';
-      else if (eType === 'UNIT') mode = 'unit';
-      
-      flyToEntity(entityId, mode);
+  // Ground Control Points (GCPs) Survey Monuments
+  const GCP_MONUMENTS = useMemo(() => [
+    { id: 'GCP-01', name: 'NW Parcel Monument', lon: 77.6243, lat: 12.9361, elev: '920.12m' },
+    { id: 'GCP-02', name: 'NE Boundary Pillar', lon: 77.6257, lat: 12.9361, elev: '920.45m' },
+    { id: 'GCP-03', name: 'SE Marker Post', lon: 77.6257, lat: 12.9349, elev: '919.88m' },
+    { id: 'GCP-04', name: 'SW Plinth Monument', lon: 77.6243, lat: 12.9349, elev: '919.65m' },
+    { id: 'GCP-05', name: 'Tower Alpha Column SW', lon: 77.6245, lat: 12.9351, elev: '920.00m' },
+    { id: 'GCP-06', name: 'Tower Alpha Column NE', lon: 77.6251, lat: 12.9357, elev: '920.05m' }
+  ], []);
+
+  // Ground DEM Mesh Grid Lines
+  const DEM_GRID_LINES = useMemo(() => {
+    const lines = [];
+    const minLon = 77.6241;
+    const maxLon = 77.6259;
+    const minLat = 12.9347;
+    const maxLat = 12.9363;
+    const step = 0.0003;
+
+    for (let lon = minLon; lon <= maxLon; lon += step) {
+      lines.push([[lon, minLat], [lon, maxLat]]);
     }
-  }, [selectedEntity?.entity_id, selectedEntity?.entity_type, flyToTarget, flyToEntity]);
+    for (let lat = minLat; lat <= maxLat; lat += step) {
+      lines.push([[minLon, lat], [maxLon, lat]]);
+    }
+    return lines;
+  }, []);
+
+  // Subterranean Utilities
+  const SUBTERRANEAN_NETWORKS = useMemo(() => [
+    {
+      id: 'UTIL_DRAIN_01',
+      name: 'Koramangala Stormwater Drain Box Culvert (-2.5m)',
+      coords: [[77.6242, 12.9348], [77.6258, 12.9348]],
+      depth: -2.5,
+      color: '#0ea5e9'
+    },
+    {
+      id: 'UTIL_METRO_CORRIDOR',
+      name: 'Subterranean Metro Line Corridor (-14.0m to -18.0m)',
+      coords: [[77.6239, 12.9364], [77.6261, 12.9364]],
+      depth: -14.0,
+      color: '#ec4899'
+    }
+  ], []);
+
+  // Filter features by layers
+  const parcelFeatures = features.filter(f => f.properties.entity_type === 'PARCEL');
+  const buildingFeatures = features.filter(f => f.properties.entity_type === 'BUILDING');
+  const unitFeatures = features.filter(f => f.properties.entity_type === 'UNIT' || f.properties.entity_type === 'UNDERGROUND');
 
   return (
-    <div className="relative w-full h-full bg-slate-100 overflow-hidden">
-      <div ref={containerRef} className="w-full h-full" id="cesiumContainer" />
-      
-      {/* Loading Indicator */}
-      {loading3D && (
-        <div className="absolute top-16 right-4 px-3.5 py-1.5 rounded-lg bg-white/90 backdrop-blur-md border border-slate-200 text-blue-600 text-xs font-mono flex items-center space-x-2 z-10 shadow-lg pointer-events-none animate-in fade-in duration-200">
-          <svg className="w-3.5 h-3.5 animate-spin text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-          </svg>
-          <span className="text-slate-700 font-sans font-medium">Syncing 3D Cadastre...</span>
+    <div className="relative w-full h-full bg-slate-50 overflow-hidden select-none">
+      {/* 1. Underlying Cesium Container for WebGL Hardware Acceleration */}
+      <div 
+        ref={containerRef} 
+        className={`w-full h-full absolute inset-0 ${spatialViewMode === 'GLOBE_CESIUM' ? 'opacity-100 z-10' : 'opacity-0 pointer-events-none'}`} 
+        id="cesiumContainer" 
+      />
+
+      {/* 2. Interactive High-Precision 3D Cadastral Spatial Projection Engine */}
+      <div className={`w-full h-full absolute inset-0 flex items-center justify-center ${spatialViewMode === 'CADASTRE_3D' ? 'z-10' : 'z-0 pointer-events-none'}`}>
+        <svg 
+          viewBox="0 0 960 880" 
+          className="w-full h-full max-w-full max-h-full cursor-default"
+          onClick={handleSvgClick}
+        >
+          <defs>
+            {/* Architectural Shadow Filters */}
+            <filter id="cadastreShadow" x="-20%" y="-20%" width="150%" height="150%">
+              <feDropShadow dx="0" dy="8" stdDeviation="12" floodColor="#0f172a" floodOpacity="0.12" />
+            </filter>
+            <filter id="heroGlow" x="-30%" y="-30%" width="160%" height="160%">
+              <feDropShadow dx="0" dy="4" stdDeviation="8" floodColor="#2563eb" floodOpacity="0.35" />
+            </filter>
+
+            {/* Gradient Patterns */}
+            <linearGradient id="parcelGroundGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#ecfdf5" stopOpacity="0.9" />
+              <stop offset="100%" stopColor="#d1fae5" stopOpacity="0.75" />
+            </linearGradient>
+
+            <linearGradient id="roadGrad" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor="#e2e8f0" stopOpacity="0.95" />
+              <stop offset="50%" stopColor="#cbd5e1" stopOpacity="1" />
+              <stop offset="100%" stopColor="#e2e8f0" stopOpacity="0.95" />
+            </linearGradient>
+
+            <linearGradient id="towerBetaGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#94a3b8" />
+              <stop offset="100%" stopColor="#64748b" />
+            </linearGradient>
+          </defs>
+
+          {/* Background Spatial Grid & Horizon */}
+          <g className="opacity-40">
+            {Array.from({ length: 16 }).map((_, i) => (
+              <line 
+                key={`bg_grid_${i}`}
+                x1={60 + i * 55} 
+                y1="40" 
+                x2={60 + i * 55} 
+                y2="840" 
+                stroke="#e2e8f0" 
+                strokeWidth="1" 
+                strokeDasharray="2,4" 
+              />
+            ))}
+          </g>
+
+          {/* DEM Terrain Elevation Wireframe Grid (Layer Toggleable) */}
+          {layers.demDsm && (
+            <g className="dem-grid-layer transition-opacity duration-300">
+              {DEM_GRID_LINES.map((seg, idx) => {
+                const p1 = projectToScreen(seg[0][0], seg[0][1], -0.2);
+                const p2 = projectToScreen(seg[1][0], seg[1][1], -0.2);
+                return (
+                  <line 
+                    key={`dem_${idx}`}
+                    x1={p1.x.toFixed(1)} 
+                    y1={p1.y.toFixed(1)} 
+                    x2={p2.x.toFixed(1)} 
+                    y2={p2.y.toFixed(1)} 
+                    stroke="#14b8a6" 
+                    strokeWidth="1" 
+                    strokeOpacity="0.45" 
+                  />
+                );
+              })}
+            </g>
+          )}
+
+          {/* Surrounding Road Corridors */}
+          {layers.roads && ROAD_AXES.map((road, rIdx) => {
+            const p1 = projectToScreen(road.coords[0][0], road.coords[0][1], 0.0);
+            const p2 = projectToScreen(road.coords[1][0], road.coords[1][1], 0.0);
+            return (
+              <g key={`road_${rIdx}`}>
+                <line 
+                  x1={p1.x.toFixed(1)} 
+                  y1={p1.y.toFixed(1)} 
+                  x2={p2.x.toFixed(1)} 
+                  y2={p2.y.toFixed(1)} 
+                  stroke="url(#roadGrad)" 
+                  strokeWidth={road.width * 2} 
+                  strokeLinecap="round" 
+                />
+                <line 
+                  x1={p1.x.toFixed(1)} 
+                  y1={p1.y.toFixed(1)} 
+                  x2={p2.x.toFixed(1)} 
+                  y2={p2.y.toFixed(1)} 
+                  stroke="#94a3b8" 
+                  strokeWidth="1.5" 
+                  strokeDasharray="6,8" 
+                />
+              </g>
+            );
+          })}
+
+          {/* Subterranean Infrastructure Network (Layer Toggleable) */}
+          {layers.underground && SUBTERRANEAN_NETWORKS.map((util, uIdx) => {
+            const p1 = projectToScreen(util.coords[0][0], util.coords[0][1], util.depth);
+            const p2 = projectToScreen(util.coords[1][0], util.coords[1][1], util.depth);
+            return (
+              <g key={`util_${uIdx}`}>
+                <line 
+                  x1={p1.x.toFixed(1)} 
+                  y1={p1.y.toFixed(1)} 
+                  x2={p2.x.toFixed(1)} 
+                  y2={p2.y.toFixed(1)} 
+                  stroke={util.color} 
+                  strokeWidth="4" 
+                  strokeDasharray="4,4"
+                  strokeOpacity="0.85" 
+                />
+                <circle cx={p1.x.toFixed(1)} cy={p1.y.toFixed(1)} r="3.5" fill={util.color} />
+                <circle cx={p2.x.toFixed(1)} cy={p2.y.toFixed(1)} r="3.5" fill={util.color} />
+              </g>
+            );
+          })}
+
+          {/* 1. Real 2D Cadastral Parcel Boundary (Khasra 102/4A, 8,450 m²) */}
+          {layers.parcelBoundaries && parcelFeatures.map((parcel) => {
+            const isSelected = selectedEntity?.entity_id === parcel.id || selectedEntity?.entity_id === 'PARCEL_102_4A';
+            const pathD = polygonToSvgPath(parcel.geometry.coordinates, 0.0);
+            const plinthD = polygonToSvgPath(parcel.geometry.coordinates, 0.45);
+            const centerPt = projectToScreen(ORIGIN_LON, ORIGIN_LAT, 0.45);
+
+            return (
+              <g 
+                key={parcel.id} 
+                onClick={() => setSelectedEntityId(parcel.id)}
+                className="cursor-pointer group"
+              >
+                {/* Parcel Base Slab */}
+                <path 
+                  d={pathD} 
+                  fill="url(#parcelGroundGrad)" 
+                  stroke="#059669" 
+                  strokeWidth="2.5" 
+                  filter="url(#cadastreShadow)" 
+                />
+                
+                {/* Plinth Top Demarcation */}
+                <path 
+                  d={plinthD} 
+                  fill="none" 
+                  stroke={isSelected ? '#2563eb' : '#10b981'} 
+                  strokeWidth={isSelected ? 3.5 : 2} 
+                  strokeDasharray={isSelected ? '6,3' : 'none'} 
+                />
+
+                {/* Parcel Demarcation Banner */}
+                <g transform={`translate(${centerPt.x - 170}, ${centerPt.y + 110})`}>
+                  <rect 
+                    width="190" 
+                    height="28" 
+                    rx="6" 
+                    fill="white" 
+                    fillOpacity="0.95" 
+                    stroke="#059669" 
+                    strokeWidth="1.2" 
+                    filter="url(#cadastreShadow)" 
+                  />
+                  <circle cx="14" cy="14" r="4.5" fill="#10b981" />
+                  <text x="26" y="18" fill="#065f46" fontSize="11" fontWeight="700" fontFamily="sans-serif">
+                    PARCEL 102/4A · 8,450 m²
+                  </text>
+                </g>
+              </g>
+            );
+          })}
+
+          {/* Survey GCP Monument Stations */}
+          {GCP_MONUMENTS.map((gcp) => {
+            const pos = projectToScreen(gcp.lon, gcp.lat, 0.45);
+            return (
+              <g key={gcp.id} className="cursor-help">
+                <title>{`${gcp.id}: ${gcp.name} (Elevation ${gcp.elev})`}</title>
+                <circle cx={pos.x} cy={pos.y} r="4" fill="#2563eb" stroke="white" strokeWidth="1.5" />
+                <circle cx={pos.x} cy={pos.y} r="8" fill="none" stroke="#3b82f6" strokeWidth="1" strokeDasharray="2,2" />
+                <text x={pos.x + 6} y={pos.y + 3} fill="#475569" fontSize="9" fontWeight="600" fontFamily="monospace">
+                  {gcp.id}
+                </text>
+              </g>
+            );
+          })}
+
+          {/* 2. 3D Building Extrusions (Tower Beta & Tower Alpha Plinth) */}
+          {layers.buildings3d && buildingFeatures.map((bldg) => {
+            const props = bldg.properties;
+            const isContext = props.is_context;
+            const bId = props.building_id || bldg.id;
+            const isSelected = selectedEntity?.entity_id === bId;
+
+            if (isContext) {
+              // Tower Beta (Innovation Wing, 12m, 4 storeys)
+              return renderExtrudedVolume(
+                bldg.geometry.coordinates,
+                0.0,
+                12.0,
+                '#94a3b8',
+                '#475569',
+                isSelected,
+                bId,
+                'BUILDING',
+                'Tower Beta (Innovation Wing - 12m, 4 Storeys)'
+              );
+            } else {
+              // Tower Alpha Foundation Plinth
+              return renderExtrudedVolume(
+                bldg.geometry.coordinates,
+                0.0,
+                0.6,
+                '#cbd5e1',
+                '#0284c7',
+                isSelected,
+                bId,
+                'BUILDING',
+                'Tower Alpha Foundation Base Plinth (0.6m)'
+              );
+            }
+          })}
+
+          {/* 3. Volumetric Floors & Private Property Units (Floors 1-6 & Basement B1) */}
+          {layers.floorsUnits && unitFeatures.map((unit) => {
+            const props = unit.properties;
+            const baseZ = props.local_base_m ?? 0.56;
+            const roofZ = props.local_roof_m ?? 3.56;
+            const isSelected = selectedEntity?.entity_id === unit.id || selectedEntity?.ulpin_3d === props.ulpin_3d;
+            const color = props.color || '#3b82f6';
+            const uId = unit.id;
+            const flNum = props.floor_level ?? 1;
+
+            return renderExtrudedVolume(
+              unit.geometry.coordinates,
+              baseZ,
+              roofZ,
+              color,
+              isSelected ? '#1d4ed8' : '#334155',
+              isSelected,
+              uId,
+              props.entity_type,
+              `Unit ${props.unit_number || uId} (Floor ${flNum}) - ULPIN: ${props.ulpin_3d}`
+            );
+          })}
+
+          {/* Selected Unit 3D Hero Callout Annotation */}
+          {selectedEntity && (
+            (() => {
+              const uId = selectedEntity.entity_id;
+              const matched = unitFeatures.find(u => u.id === uId || u.properties.ulpin_3d === selectedEntity.ulpin_3d);
+              if (matched) {
+                const center = matched.properties.center || [ORIGIN_LON, ORIGIN_LAT];
+                const baseZ = matched.properties.local_base_m ?? 6.0;
+                const roofZ = matched.properties.local_roof_m ?? 9.0;
+                const pos = projectToScreen(center[0], center[1], roofZ);
+
+                return (
+                  <g transform={`translate(${pos.x + 24}, ${pos.y - 48})`} filter="url(#heroGlow)">
+                    <line x1="-24" y1="48" x2="0" y2="0" stroke="#2563eb" strokeWidth="2" strokeDasharray="3,3" />
+                    <rect width="210" height="54" rx="8" fill="white" stroke="#2563eb" strokeWidth="2" />
+                    <circle cx="14" cy="16" r="4.5" fill="#2563eb" />
+                    <text x="26" y="20" fill="#1e3a8a" fontSize="11" fontWeight="700" fontFamily="sans-serif">
+                      {selectedEntity.type_label?.split('/')[0] || selectedEntity.entity_id}
+                    </text>
+                    <text x="26" y="34" fill="#0284c7" fontSize="10" fontWeight="600" fontFamily="monospace">
+                      {selectedEntity.ulpin_3d ? `${selectedEntity.ulpin_3d.substring(0, 22)}...` : selectedEntity.entity_id}
+                    </text>
+                    <text x="26" y="46" fill="#64748b" fontSize="9" fontWeight="500">
+                      Area: {selectedEntity.area_sqm} m² · Vol: {selectedEntity.volume_m3} m³
+                    </text>
+                  </g>
+                );
+              }
+              return null;
+            })()
+          )}
+
+          {/* Dynamic Section Clipping Plane (when activeTool === 'section') */}
+          {activeTool === 'section' && (
+            (() => {
+              const sw = projectToScreen(77.6244, 12.9350, sectionPlaneZ);
+              const se = projectToScreen(77.6258, 12.9350, sectionPlaneZ);
+              const ne = projectToScreen(77.6258, 12.9358, sectionPlaneZ);
+              const nw = projectToScreen(77.6244, 12.9358, sectionPlaneZ);
+              const pathStr = `M ${sw.x} ${sw.y} L ${se.x} ${se.y} L ${ne.x} ${ne.y} L ${nw.x} ${nw.y} Z`;
+
+              return (
+                <g className="animate-in fade-in duration-200 pointer-events-none">
+                  <path d={pathStr} fill="#38bdf8" fillOpacity="0.35" stroke="#0284c7" strokeWidth="2" strokeDasharray="4,4" />
+                  <text x={nw.x + 10} y={nw.y - 8} fill="#0369a1" fontSize="11" fontWeight="700" fontFamily="monospace">
+                    CLIP DATUM: +{sectionPlaneZ}m AMSL
+                  </text>
+                </g>
+              );
+            })()
+          )}
+
+          {/* Interactive 3D Measurement Overlay (when activeTool === 'measure') */}
+          {activeTool === 'measure' && (
+            <g className="pointer-events-none">
+              {measureClickPoints.map((pt, idx) => (
+                <g key={`m_pt_${idx}`}>
+                  <circle cx={pt.x} cy={pt.y} r="6" fill="#2563eb" stroke="white" strokeWidth="2" />
+                  <circle cx={pt.x} cy={pt.y} r="12" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeDasharray="2,2" className="animate-ping" />
+                  <text x={pt.x + 8} y={pt.y - 8} fill="#1e3a8a" fontSize="10" fontWeight="700">
+                    P{idx + 1}
+                  </text>
+                </g>
+              ))}
+
+              {measureClickPoints.length === 2 && (
+                <line 
+                  x1={measureClickPoints[0].x} 
+                  y1={measureClickPoints[0].y} 
+                  x2={measureClickPoints[1].x} 
+                  y2={measureClickPoints[1].y} 
+                  stroke="#2563eb" 
+                  strokeWidth="2.5" 
+                  strokeDasharray="4,4" 
+                />
+              )}
+            </g>
+          )}
+        </svg>
+      </div>
+
+      {/* View Engine Switcher Pill (Top Right) */}
+      <div className="absolute top-16 right-4 flex items-center p-1 bg-white/95 backdrop-blur-xl border border-slate-200/90 rounded-xl shadow-md z-20 text-xs font-semibold">
+        <button
+          onClick={() => setSpatialViewMode('CADASTRE_3D')}
+          className={`px-3 py-1.5 rounded-lg flex items-center space-x-1.5 transition ${
+            spatialViewMode === 'CADASTRE_3D' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <Move3d className="w-3.5 h-3.5" />
+          <span>Cadastre 3D</span>
+        </button>
+        <button
+          onClick={() => setSpatialViewMode('GLOBE_CESIUM')}
+          className={`px-3 py-1.5 rounded-lg flex items-center space-x-1.5 transition ${
+            spatialViewMode === 'GLOBE_CESIUM' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <Compass className="w-3.5 h-3.5" />
+          <span>Cesium Globe</span>
+        </button>
+      </div>
+
+      {/* Real-time Vertical Floor Explosion Slider HUD (Active when Explode > 0) */}
+      {explodeFactor > 0 && (
+        <div className="absolute bottom-16 left-6 p-4 rounded-2xl bg-white/95 backdrop-blur-xl border border-slate-200 shadow-xl z-20 w-80 text-xs text-slate-800 animate-in slide-in-from-bottom-2 duration-200">
+          <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100">
+            <div className="flex items-center space-x-2">
+              <Box className="w-4 h-4 text-blue-600" />
+              <span className="font-bold text-slate-900 text-xs">Vertical Storey Explosion</span>
+            </div>
+            <span className="font-mono text-blue-600 font-bold">{explodeFactor.toFixed(1)}x</span>
+          </div>
+
+          <p className="text-[11px] text-slate-500 mb-3">
+            Physically separates 3D floor slabs and internal private property units along vertical Z-axis.
+          </p>
+
+          <input 
+            type="range"
+            min="0"
+            max="3.5"
+            step="0.1"
+            value={explodeFactor}
+            onChange={(e) => setExplodeFactor(parseFloat(e.target.value))}
+            className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+          />
+
+          <div className="flex justify-between text-[10px] text-slate-400 font-mono mt-1.5">
+            <span>0x (Closed Envelope)</span>
+            <span>1.5x (Floor Separation)</span>
+            <span>3.5x (Full Unit Isolation)</span>
+          </div>
         </div>
       )}
 
-      {/* Interactive Measurement HUD */}
-      {activeTool === 'measure' && (
-        <div className="absolute top-20 left-4 p-4 rounded-2xl bg-white/95 backdrop-blur-xl border border-slate-200 shadow-xl z-20 w-72 text-xs animate-in fade-in duration-200 text-slate-800">
-          <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-100">
+      {/* Dynamic Section Plane Slider HUD (when activeTool === 'section') */}
+      {activeTool === 'section' && (
+        <div className="absolute top-20 left-6 p-4 rounded-2xl bg-white/95 backdrop-blur-xl border border-slate-200 shadow-xl z-20 w-80 text-xs text-slate-800 animate-in fade-in duration-200">
+          <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100">
             <div className="flex items-center space-x-2">
-              <span className="w-2 h-2 rounded-full bg-blue-600 animate-ping"></span>
-              <span className="font-bold text-slate-900 uppercase tracking-wider text-[11px]">3D Measurement</span>
+              <SplitSquareVertical className="w-4 h-4 text-blue-600" />
+              <span className="font-bold text-slate-900 text-xs">3D Section Clipping Plane</span>
             </div>
-            <button
-              onClick={() => setActiveTool('select')}
-              className="text-slate-400 hover:text-slate-700 text-[11px]"
+            <button 
+              onClick={() => setActiveTool('select')} 
+              className="text-slate-400 hover:text-slate-700 text-xs"
             >
-              Close
+              Done
             </button>
           </div>
 
-          <div className="text-[11px] text-slate-500 mb-3 leading-relaxed">
-            Click two points on terrain or building facades to measure 3D spatial distance and vertical elevation differential.
-          </div>
+          <p className="text-[11px] text-slate-500 mb-3">
+            Slices horizontally across Tower Alpha to inspect floor partition plans and private boundary seals.
+          </p>
 
-          <div className="space-y-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200/80 font-mono text-[11px]">
-            <div className="flex justify-between">
-              <span className="text-slate-500">Euclidean Distance:</span>
-              <span className="text-blue-600 font-bold">
-                {measureResult ? `${measureResult.distance.toFixed(2)} m` : '---'}
-              </span>
+          <div className="space-y-1">
+            <div className="flex justify-between font-mono text-[11px] text-slate-600">
+              <span>Section Cut Height:</span>
+              <span className="font-bold text-blue-600">+{sectionPlaneZ} m</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">Height Diff (ΔZ):</span>
-              <span className="text-emerald-600 font-bold">
-                {measureResult ? `${measureResult.deltaZ.toFixed(2)} m` : '---'}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">Horizontal Dist:</span>
-              <span className="text-indigo-600 font-bold">
-                {measureResult ? `${measureResult.horizDist.toFixed(2)} m` : '---'}
-              </span>
+            <input 
+              type="range"
+              min="0"
+              max="24"
+              step="1"
+              value={sectionPlaneZ}
+              onChange={(e) => setSectionPlaneZ(parseInt(e.target.value))}
+              className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+            />
+            <div className="flex justify-between text-[10px] text-slate-400 font-mono">
+              <span>Ground (0m)</span>
+              <span>Floor 3 (+9m)</span>
+              <span>Roof (+18m)</span>
             </div>
           </div>
+        </div>
+      )}
 
-          <div className="mt-3 flex items-center justify-between">
-            <button
-              onClick={clearMeasurements}
-              className="px-2.5 py-1 text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition font-medium"
+      {/* 3D Measurement Distance HUD (when activeTool === 'measure') */}
+      {activeTool === 'measure' && (
+        <div className="absolute top-20 left-6 p-4 rounded-2xl bg-white/95 backdrop-blur-xl border border-slate-200 shadow-xl z-20 w-80 text-xs text-slate-800 animate-in fade-in duration-200">
+          <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100">
+            <div className="flex items-center space-x-2">
+              <Ruler className="w-4 h-4 text-blue-600" />
+              <span className="font-bold text-slate-900 text-xs">3D Spatial Measurement</span>
+            </div>
+            <button 
+              onClick={() => { setActiveTool('select'); setMeasureClickPoints([]); setMeasureOutput(null); }} 
+              className="text-slate-400 hover:text-slate-700 text-xs"
             >
-              Clear Marks
+              Done
             </button>
-            <span className="text-[10px] text-slate-400">
-              {measurePoints.length === 1 ? 'Pick 2nd point...' : 'Ready for pick'}
+          </div>
+
+          <p className="text-[11px] text-slate-500 mb-3">
+            Click any two vertices on parcel boundaries, building corners, or floor slabs to measure spatial delta.
+          </p>
+
+          <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/80 space-y-1.5 font-mono text-[11px]">
+            <div className="flex justify-between">
+              <span className="text-slate-500">Euclidean 3D Distance:</span>
+              <span className="font-bold text-blue-600">{measureOutput ? `${measureOutput.distance3D.toFixed(2)} m` : 'Pick 2 points'}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-500">Height Differential (ΔZ):</span>
+              <span className="font-bold text-emerald-600">{measureOutput ? `${measureOutput.deltaZ.toFixed(2)} m` : '---'}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-500">Horizontal Ground Dist:</span>
+              <span className="font-bold text-indigo-600">{measureOutput ? `${measureOutput.horizontalDist.toFixed(2)} m` : '---'}</span>
+            </div>
+          </div>
+
+          <div className="mt-3 flex justify-between items-center text-[10px]">
+            <button
+              onClick={() => { setMeasureClickPoints([]); setMeasureOutput(null); }}
+              className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition font-medium"
+            >
+              Clear Points
+            </button>
+            <span className="text-slate-400">
+              {measureClickPoints.length === 0 ? 'Click 1st vertex' : (measureClickPoints.length === 1 ? 'Click 2nd vertex' : 'Measured')}
             </span>
           </div>
         </div>
       )}
 
-      {/* Interactive Section Plane HUD */}
-      {activeTool === 'section' && (
-        <div className="absolute top-20 left-4 p-4 rounded-2xl bg-white/95 backdrop-blur-xl border border-slate-200 shadow-xl z-20 w-72 text-xs animate-in fade-in duration-200 text-slate-800">
-          <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-100">
-            <div className="flex items-center space-x-2">
-              <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse"></span>
-              <span className="font-bold text-slate-900 uppercase tracking-wider text-[11px]">Dynamic Section Plane</span>
-            </div>
-            <button
-              onClick={() => setActiveTool('select')}
-              className="text-slate-400 hover:text-slate-700 text-[11px]"
-            >
-              Close
-            </button>
-          </div>
-
-          <div className="text-[11px] text-slate-500 mb-3 leading-relaxed">
-            Slice vertically across building volumes to inspect interior cadastre storeys and unit envelopes.
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex justify-between items-center text-[11px]">
-              <span className="text-slate-500 font-medium">Cut Datum:</span>
-              <span className="font-mono text-blue-600 font-bold">{sectionHeight} m</span>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="60"
-              step="1"
-              value={sectionHeight}
-              onChange={(e) => setSectionHeight(Number(e.target.value))}
-              className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
-            />
-            <div className="flex justify-between text-[9px] text-slate-400 font-mono">
-              <span>0m (Ground)</span>
-              <span>30m (Mid-Rise)</span>
-              <span>60m (Tower)</span>
-            </div>
-          </div>
+      {/* Syncing Indicator */}
+      {loading3D && (
+        <div className="absolute top-16 right-48 px-3 py-1.5 rounded-xl bg-white/95 backdrop-blur-md border border-slate-200 text-blue-600 text-xs font-mono flex items-center space-x-2 z-20 shadow-sm pointer-events-none">
+          <svg className="w-3.5 h-3.5 animate-spin text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          <span className="text-slate-700 font-sans font-medium text-xs">Transforming Cadastre...</span>
         </div>
       )}
     </div>

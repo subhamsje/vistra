@@ -1,0 +1,49 @@
+{
+  "type": "FeatureCollection",
+  "name": "BKC_Commercial_Cadastral_Parcel",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "PARCEL_BKC_C59",
+      "properties": {
+        "survey_khasra_no": "BKC/C-59/G-Block",
+        "district": "MUM",
+        "state": "MH",
+        "country": "IN",
+        "village_ward": "Bandra Kurla Complex G Block",
+        "land_use": "High-Density Commercial & Financial District",
+        "base_elevation_m": 14.0,
+        "max_elevation_m": 85.0,
+        "owner_name": "Mumbai Metropolitan Region Development Authority (MMRDA)",
+        "registered_area_sqm": 7800.0
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              72.8678,
+              19.065900000000003
+            ],
+            [
+              72.86919999999999,
+              19.065900000000003
+            ],
+            [
+              72.86919999999999,
+              19.0671
+            ],
+            [
+              72.8678,
+              19.0671
+            ],
+            [
+              72.8678,
+              19.065900000000003
+            ]
+          ]
+        ]
+      }
+    }
+  ]
+}

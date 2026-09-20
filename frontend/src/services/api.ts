@@ -6,15 +6,59 @@ import {
   ULPINRecord, 
   DataSourceItem, 
   ReviewQueueItem, 
-  AuditRecord 
+  AuditRecord,
+  ProjectRecord,
+  PlatformGlobalStats
 } from '../types/cadastre';
 
 const API_BASE = '/api';
 
 export const cadastreApi = {
-  async getJurisdictions(): Promise<Jurisdiction[]> {
+  async getProjects(): Promise<ProjectRecord[]> {
     try {
-      const res = await fetch(`${API_BASE}/jurisdictions`);
+      const res = await fetch(`${API_BASE}/projects`);
+      if (!res.ok) throw new Error('Failed to fetch projects');
+      return await res.json();
+    } catch (e) {
+      console.warn('Failed to fetch projects:', e);
+      return [];
+    }
+  },
+
+  async getProject(id: string): Promise<ProjectRecord | null> {
+    try {
+      const res = await fetch(`${API_BASE}/projects/${id}`);
+      if (!res.ok) throw new Error('Failed to fetch project');
+      return await res.json();
+    } catch (e) {
+      console.warn(`Failed to fetch project ${id}:`, e);
+      return null;
+    }
+  },
+
+  async activateProject(id: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/projects/${id}/activate`, {
+      method: 'POST'
+    });
+    if (!res.ok) throw new Error('Failed to activate project');
+    return await res.json();
+  },
+
+  async getPlatformStats(): Promise<PlatformGlobalStats | null> {
+    try {
+      const res = await fetch(`${API_BASE}/platform/stats`);
+      if (!res.ok) throw new Error('Failed to fetch platform stats');
+      return await res.json();
+    } catch (e) {
+      console.warn('Failed to fetch platform stats:', e);
+      return null;
+    }
+  },
+
+  async getJurisdictions(projectId?: string): Promise<Jurisdiction[]> {
+    try {
+      const url = projectId ? `${API_BASE}/jurisdictions?project=${encodeURIComponent(projectId)}` : `${API_BASE}/jurisdictions`;
+      const res = await fetch(url);
       if (!res.ok) throw new Error('Failed to fetch jurisdictions');
       return await res.json();
     } catch (e) {
@@ -34,9 +78,10 @@ export const cadastreApi = {
     }
   },
 
-  async getPipelineStatus(): Promise<PipelineStatus | null> {
+  async getPipelineStatus(projectId?: string): Promise<PipelineStatus | null> {
     try {
-      const res = await fetch(`${API_BASE}/pipeline/status`);
+      const url = projectId ? `${API_BASE}/pipeline/status?project=${encodeURIComponent(projectId)}` : `${API_BASE}/pipeline/status`;
+      const res = await fetch(url);
       if (!res.ok) throw new Error('Failed to fetch pipeline status');
       return await res.json();
     } catch (e) {
@@ -45,8 +90,9 @@ export const cadastreApi = {
     }
   },
 
-  async triggerPipelineRun(): Promise<any> {
-    const res = await fetch(`${API_BASE}/pipeline/run`, {
+  async triggerPipelineRun(projectId?: string): Promise<any> {
+    const url = projectId ? `${API_BASE}/pipeline/run?project=${encodeURIComponent(projectId)}` : `${API_BASE}/pipeline/run`;
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }
     });
@@ -54,9 +100,10 @@ export const cadastreApi = {
     return await res.json();
   },
 
-  async getEvidenceSummary(): Promise<any> {
+  async getEvidenceSummary(projectId?: string): Promise<any> {
     try {
-      const res = await fetch(`${API_BASE}/evidence/summary`);
+      const url = projectId ? `${API_BASE}/evidence/summary?project=${encodeURIComponent(projectId)}` : `${API_BASE}/evidence/summary`;
+      const res = await fetch(url);
       if (!res.ok) throw new Error('Failed to fetch evidence summary');
       return await res.json();
     } catch (e) {
@@ -65,9 +112,12 @@ export const cadastreApi = {
     }
   },
 
-  async getEntityDetails(idOrUlpin: string): Promise<EntityDetails | null> {
+  async getEntityDetails(idOrUlpin: string, projectId?: string): Promise<EntityDetails | null> {
     try {
-      const res = await fetch(`${API_BASE}/entity/${encodeURIComponent(idOrUlpin)}`);
+      const url = projectId 
+        ? `${API_BASE}/entity/${encodeURIComponent(idOrUlpin)}?project=${encodeURIComponent(projectId)}` 
+        : `${API_BASE}/entity/${encodeURIComponent(idOrUlpin)}`;
+      const res = await fetch(url);
       if (!res.ok) throw new Error('Failed to fetch entity details');
       return await res.json();
     } catch (e) {
@@ -76,9 +126,10 @@ export const cadastreApi = {
     }
   },
 
-  async getRegistryRecords(query = '', entityType = 'ALL', page = 1): Promise<{ total: number; records: ULPINRecord[] }> {
+  async getRegistryRecords(query = '', entityType = 'ALL', page = 1, projectId?: string): Promise<{ total: number; records: ULPINRecord[] }> {
     try {
       const params = new URLSearchParams({ query, entity_type: entityType, page: page.toString(), limit: '50' });
+      if (projectId) params.set('project', projectId);
       const res = await fetch(`${API_BASE}/registry?${params.toString()}`);
       if (!res.ok) throw new Error('Failed to fetch registry');
       return await res.json();
@@ -88,9 +139,10 @@ export const cadastreApi = {
     }
   },
 
-  async getValidationReport(): Promise<any> {
+  async getValidationReport(projectId?: string): Promise<any> {
     try {
-      const res = await fetch(`${API_BASE}/validation-report`);
+      const url = projectId ? `${API_BASE}/validation-report?project=${encodeURIComponent(projectId)}` : `${API_BASE}/validation-report`;
+      const res = await fetch(url);
       if (!res.ok) throw new Error('Failed to fetch validation report');
       return await res.json();
     } catch (e) {
@@ -99,9 +151,10 @@ export const cadastreApi = {
     }
   },
 
-  async getDataSources(): Promise<DataSourceItem[]> {
+  async getDataSources(projectId?: string): Promise<DataSourceItem[]> {
     try {
-      const res = await fetch(`${API_BASE}/datasources`);
+      const url = projectId ? `${API_BASE}/datasources?project=${encodeURIComponent(projectId)}` : `${API_BASE}/datasources`;
+      const res = await fetch(url);
       if (!res.ok) throw new Error('Failed to fetch data sources');
       return await res.json();
     } catch (e) {
@@ -110,9 +163,10 @@ export const cadastreApi = {
     }
   },
 
-  async getReviewQueue(): Promise<ReviewQueueItem[]> {
+  async getReviewQueue(projectId?: string): Promise<ReviewQueueItem[]> {
     try {
-      const res = await fetch(`${API_BASE}/governance/review-queue`);
+      const url = projectId ? `${API_BASE}/governance/review-queue?project=${encodeURIComponent(projectId)}` : `${API_BASE}/governance/review-queue`;
+      const res = await fetch(url);
       if (!res.ok) throw new Error('Failed to fetch review queue');
       return await res.json();
     } catch (e) {
@@ -121,9 +175,10 @@ export const cadastreApi = {
     }
   },
 
-  async getAuditTrail(): Promise<AuditRecord[]> {
+  async getAuditTrail(projectId?: string): Promise<AuditRecord[]> {
     try {
-      const res = await fetch(`${API_BASE}/governance/audit-trail`);
+      const url = projectId ? `${API_BASE}/governance/audit-trail?project=${encodeURIComponent(projectId)}` : `${API_BASE}/governance/audit-trail`;
+      const res = await fetch(url);
       if (!res.ok) throw new Error('Failed to fetch audit trail');
       return await res.json();
     } catch (e) {
@@ -142,9 +197,10 @@ export const cadastreApi = {
     return await res.json();
   },
 
-  async getCadastralTree(): Promise<any[]> {
+  async getCadastralTree(projectId?: string): Promise<any[]> {
     try {
-      const res = await fetch(`${API_BASE}/cadastral-tree`);
+      const url = projectId ? `${API_BASE}/cadastral-tree?project=${encodeURIComponent(projectId)}` : `${API_BASE}/cadastral-tree`;
+      const res = await fetch(url);
       if (!res.ok) throw new Error('Failed to fetch cadastral tree');
       return await res.json();
     } catch (e) {
@@ -153,29 +209,32 @@ export const cadastreApi = {
     }
   },
 
-  async getCesiumGeoJSON(explodeFactor = 0.0, buildingId = 'BLDG_ALPHA', selectedId = ''): Promise<any> {
+  async getCesiumGeoJSON(explodeFactor = 0.0, buildingId = '', selectedId = '', projectId?: string): Promise<any> {
     const params = new URLSearchParams({
       explode_factor: explodeFactor.toString(),
       ...(buildingId ? { building_id: buildingId } : {}),
-      ...(selectedId ? { selected_id: selectedId } : {})
+      ...(selectedId ? { selected_id: selectedId } : {}),
+      ...(projectId ? { project: projectId } : {})
     });
     const res = await fetch(`${API_BASE}/cesium-geojson?${params.toString()}`);
     if (!res.ok) throw new Error('Failed to fetch 3D GeoJSON');
     return await res.json();
   },
 
-  async getRoadsGeoJSON(): Promise<any> {
+  async getRoadsGeoJSON(projectId?: string): Promise<any> {
     try {
-      const res = await fetch(`${API_BASE}/roads`);
+      const url = projectId ? `${API_BASE}/roads?project=${encodeURIComponent(projectId)}` : `${API_BASE}/roads`;
+      const res = await fetch(url);
       return await res.json();
     } catch {
       return { type: 'FeatureCollection', features: [] };
     }
   },
 
-  async getUndergroundGeoJSON(): Promise<any> {
+  async getUndergroundGeoJSON(projectId?: string): Promise<any> {
     try {
-      const res = await fetch(`${API_BASE}/underground`);
+      const url = projectId ? `${API_BASE}/underground?project=${encodeURIComponent(projectId)}` : `${API_BASE}/underground`;
+      const res = await fetch(url);
       return await res.json();
     } catch {
       return { type: 'FeatureCollection', features: [] };

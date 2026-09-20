@@ -1,0 +1,49 @@
+{
+  "type": "FeatureCollection",
+  "name": "GIFT_City_SEZ_Cadastral_Parcel",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "PARCEL_GIFT_402",
+      "properties": {
+        "survey_khasra_no": "GIFT/402-SEZ",
+        "district": "GND",
+        "state": "GJ",
+        "country": "IN",
+        "village_ward": "GIFT City Special Economic Zone",
+        "land_use": "International Financial Services Centre (IFSC)",
+        "base_elevation_m": 82.0,
+        "max_elevation_m": 150.0,
+        "owner_name": "Gujarat International Finance Tec-City Co. Ltd.",
+        "registered_area_sqm": 9200.0
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              72.6838,
+              23.1594
+            ],
+            [
+              72.6852,
+              23.1594
+            ],
+            [
+              72.6852,
+              23.1606
+            ],
+            [
+              72.6838,
+              23.1606
+            ],
+            [
+              72.6838,
+              23.1594
+            ]
+          ]
+        ]
+      }
+    }
+  ]
+}

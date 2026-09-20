@@ -1,0 +1,45 @@
+[
+  {
+    "building_id": "BLDG_GIFT_T1",
+    "building_name": "GIFT International Fintech Tower 1",
+    "has_basement": true,
+    "floor_count": 8,
+    "base_elevation_m": 82.0,
+    "height_m": 24.0,
+    "units": {
+      "-1": 1,
+      "1": 3,
+      "2": 3,
+      "3": 3,
+      "4": 3,
+      "5": 3,
+      "6": 3,
+      "7": 3,
+      "8": 3
+    },
+    "unit_types": [
+      "Fintech Trading Suite",
+      "Banking Vault",
+      "Executive Boardroom"
+    ]
+  },
+  {
+    "building_id": "BLDG_GIFT_T2",
+    "building_name": "GIFT Global Gateway Tower 2",
+    "has_basement": false,
+    "floor_count": 5,
+    "base_elevation_m": 82.0,
+    "height_m": 15.0,
+    "units": {
+      "1": 2,
+      "2": 2,
+      "3": 2,
+      "4": 2,
+      "5": 2
+    },
+    "unit_types": [
+      "Capital Markets Office",
+      "Data Center Facility"
+    ]
+  }
+]
