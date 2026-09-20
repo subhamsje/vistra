@@ -27,7 +27,7 @@ interface NavItem {
 }
 
 export const Sidebar: React.FC = () => {
-  const { activeView, setActiveView } = useCadastre();
+  const { activeView, setActiveView, reviewQueueCount } = useCadastre();
   const [collapsed, setCollapsed] = React.useState(false);
 
   const navItems: NavItem[] = [
@@ -40,34 +40,34 @@ export const Sidebar: React.FC = () => {
     { id: 'ulpin_registry', label: 'ULPIN Registry', icon: FileCode },
     { id: 'analysis', label: 'Analysis', icon: BarChart3 },
     { id: 'validation', label: 'Validation', icon: ShieldCheck },
-    { id: 'review_queue', label: 'Review Queue', icon: ClipboardCheck, badge: 12 },
+    { id: 'review_queue', label: 'Review Queue', icon: ClipboardCheck, badge: reviewQueueCount > 0 ? reviewQueueCount : undefined },
     { id: 'data_sources', label: 'Data Sources', icon: Database },
     { id: 'audit_trail', label: 'Audit Trail', icon: History },
     { id: 'settings', label: 'Settings', icon: Settings }
   ];
 
   return (
-    <aside className={`${collapsed ? 'w-16' : 'w-60'} h-full bg-[#0d1321] border-r border-white/8 flex flex-col justify-between z-30 transition-all duration-300 select-none shrink-0`}>
+    <aside className={`${collapsed ? 'w-16' : 'w-60'} h-full bg-white/80 backdrop-blur-xl border-r border-slate-200/80 flex flex-col justify-between z-30 transition-all duration-300 select-none shrink-0 text-slate-800 shadow-xs`}>
       {/* Brand Header */}
       <div>
-        <div className="h-16 px-4 flex items-center justify-between border-b border-white/8">
+        <div className="h-14 px-4 flex items-center justify-between border-b border-slate-200/80">
           <div className="flex items-center space-x-3 overflow-hidden">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-blue-600 via-indigo-600 to-cyan-400 flex items-center justify-center font-extrabold text-white text-base shadow-lg shadow-blue-500/20 shrink-0">
+            <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center font-extrabold text-white text-base shadow-xs shrink-0">
               V
             </div>
             {!collapsed && (
               <div className="leading-tight truncate">
-                <div className="font-extrabold text-sm tracking-wider text-white flex items-center space-x-1.5">
+                <div className="font-extrabold text-sm tracking-wider text-slate-900 flex items-center space-x-1.5">
                   <span>VISTRA</span>
                 </div>
-                <div className="text-[9px] text-slate-400 tracking-wider font-semibold uppercase truncate">3D Property Intelligence</div>
+                <div className="text-[9px] text-slate-500 tracking-wider font-semibold uppercase truncate">3D Cadastral Intelligence</div>
               </div>
             )}
           </div>
           
           <button 
             onClick={() => setCollapsed(!collapsed)}
-            className="p-1 text-slate-500 hover:text-white rounded hover:bg-slate-800 transition"
+            className="p-1 text-slate-400 hover:text-slate-800 rounded-md hover:bg-slate-100 transition"
             title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
             {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
@@ -75,13 +75,13 @@ export const Sidebar: React.FC = () => {
         </div>
 
         {!collapsed && (
-          <div className="px-4 py-2 text-[10px] text-blue-400/80 font-medium tracking-wide">
+          <div className="px-4 py-2 text-[10px] text-blue-700 font-medium tracking-wide">
             Vertical Insights for a Smarter Bharat
           </div>
         )}
 
         {/* Navigation List */}
-        <nav className="p-2 space-y-0.5 overflow-y-auto max-h-[calc(100vh-280px)] custom-scrollbar">
+        <nav className="p-2 space-y-0.5 overflow-y-auto max-h-[calc(100vh-270px)] custom-scrollbar">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeView === item.id;
@@ -91,20 +91,18 @@ export const Sidebar: React.FC = () => {
                 onClick={() => setActiveView(item.id)}
                 className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-all ${
                   isActive
-                    ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                    ? 'bg-blue-50 text-blue-700 font-semibold shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/80'
                 }`}
                 title={collapsed ? item.label : undefined}
               >
                 <div className="flex items-center space-x-3">
-                  <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                  <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-blue-600' : 'text-slate-400'}`} />
                   {!collapsed && <span>{item.label}</span>}
                 </div>
 
-                {!collapsed && item.badge && (
-                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
-                    isActive ? 'bg-white text-blue-700' : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                  }`}>
+                {!collapsed && item.badge !== undefined && (
+                  <span className="text-[10px] px-1.5 py-0.2 rounded-full font-bold bg-amber-100 text-amber-800 border border-amber-200">
                     {item.badge}
                   </span>
                 )}
@@ -116,12 +114,11 @@ export const Sidebar: React.FC = () => {
 
       {/* Bottom Footer: India Mission Branding */}
       {!collapsed ? (
-        <div className="p-3 border-t border-white/8 space-y-3 bg-slate-950/40">
-          {/* Bharat Pride Box */}
-          <div className="p-2.5 rounded-xl bg-gradient-to-b from-slate-900 to-slate-900/60 border border-white/5 relative overflow-hidden">
+        <div className="p-3 border-t border-slate-200/80 space-y-2.5 bg-slate-50/60">
+          <div className="p-2.5 rounded-xl bg-white border border-slate-200 shadow-xs">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] text-slate-300 font-medium">Building Transparent Secure 3D Land Records for a Stronger Bharat</span>
-              <div className="w-5 h-3 rounded-xs border border-white/20 overflow-hidden shrink-0 flex flex-col ml-2">
+              <span className="text-[10px] text-slate-600 font-medium leading-tight">3D Land Records & ULPIN Stack</span>
+              <div className="w-5 h-3 rounded-xs border border-slate-300 overflow-hidden shrink-0 flex flex-col ml-2">
                 <div className="h-1 bg-[#FF9933]"></div>
                 <div className="h-1 bg-white"></div>
                 <div className="h-1 bg-[#138808]"></div>
@@ -129,20 +126,19 @@ export const Sidebar: React.FC = () => {
             </div>
           </div>
 
-          {/* Ministry of Land Resources Crest */}
           <div className="flex items-center space-x-2 px-1">
-            <div className="w-5 h-5 rounded-full bg-slate-800 border border-white/10 flex items-center justify-center font-serif text-[10px] font-bold text-amber-400 shrink-0">
+            <div className="w-5 h-5 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center font-serif text-[10px] font-bold text-amber-600 shrink-0">
               🏛️
             </div>
-            <div className="text-[9px] text-slate-400 leading-tight">
-              <div className="font-semibold text-slate-300">Ministry of Land Resources</div>
+            <div className="text-[9px] text-slate-500 leading-tight">
+              <div className="font-semibold text-slate-700">Ministry of Land Resources</div>
               <div>Government of India</div>
             </div>
           </div>
         </div>
       ) : (
-        <div className="p-2 border-t border-white/8 flex justify-center">
-          <div className="w-6 h-4 rounded-xs border border-white/20 overflow-hidden flex flex-col">
+        <div className="p-2 border-t border-slate-200/80 flex justify-center">
+          <div className="w-6 h-4 rounded-xs border border-slate-300 overflow-hidden flex flex-col">
             <div className="h-1.5 bg-[#FF9933]"></div>
             <div className="h-1.5 bg-white"></div>
             <div className="h-1.5 bg-[#138808]"></div>

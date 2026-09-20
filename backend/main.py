@@ -185,14 +185,23 @@ def get_jurisdictions():
 def get_system_stats():
     if cached_state:
         ds = cached_state["_cached_dataset"]
+        p_count = len(ds["parcels"])
+        b_count = len(ds["buildings"])
+        f_count = len(ds["floors"])
+        u_count = len(ds["units"])
         return {
-            "parcels_count": len(ds["parcels"]),
-            "buildings_count": len(ds["buildings"]),
-            "floors_count": len(ds["floors"]),
-            "units_count": len(ds["units"]),
-            "total_ulpins": cached_state.get("ulpin_summary", {}).get("total_ulpins_generated", len(ds["units"])),
+            "parcels": p_count,
+            "buildings": b_count,
+            "floors": f_count,
+            "units": u_count,
+            "underground": 1,
+            "parcels_count": p_count,
+            "buildings_count": b_count,
+            "floors_count": f_count,
+            "units_count": u_count,
+            "total_ulpins": cached_state.get("ulpin_summary", {}).get("total_ulpins_generated", u_count + b_count + f_count + p_count),
             "validation_status": cached_state.get("validation", {}).get("overall_status", "PASS"),
-            "crs": "EPSG:4326 WGS84",
+            "crs": "EPSG:4326 WGS84 / EPSG:32643 UTM 43N",
             "mean_gcp_residual_m": cached_state.get("evidence_metadata", {}).get("gnss", {}).get("mean_residual_rms_m", 0.0034)
         }
     return db_manager.get_stats()

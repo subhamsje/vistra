@@ -37,6 +37,7 @@ interface CadastreContextType {
   activeJurisdiction: Jurisdiction | null;
   setActiveJurisdiction: (j: Jurisdiction) => void;
   user: UserProfile | null;
+  reviewQueueCount: number;
   pipelineStatus: PipelineStatus | null;
   layers: LayerVisibilityState;
   toggleLayer: (layer: keyof LayerVisibilityState) => void;
@@ -91,7 +92,7 @@ const CadastreContext = createContext<CadastreContextType | undefined>(undefined
 export const CadastreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [activeView, setActiveView] = useState<NavView>('3d_cadastre');
   const [selectedEntity, setSelectedEntity] = useState<EntityDetails | null>(null);
-  const [selectedBuildingId, setSelectedBuildingId] = useState<string>('B12');
+  const [selectedBuildingId, setSelectedBuildingId] = useState<string>('BLDG_ALPHA');
   const [isPropertyPanelOpen, setIsPropertyPanelOpen] = useState<boolean>(false);
   const [isPropertyPanelMinimized, setIsPropertyPanelMinimized] = useState<boolean>(false);
   const [isPipelineDockMinimized, setIsPipelineDockMinimized] = useState<boolean>(false);
@@ -100,12 +101,13 @@ export const CadastreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [jurisdictions, setJurisdictions] = useState<Jurisdiction[]>([]);
   const [activeJurisdiction, setActiveJurisdiction] = useState<Jurisdiction | null>(null);
   const [user, setUser] = useState<UserProfile | null>(null);
+  const [reviewQueueCount, setReviewQueueCount] = useState<number>(0);
   const [pipelineStatus, setPipelineStatus] = useState<PipelineStatus | null>(null);
   
   const [layers, setLayers] = useState<LayerVisibilityState>(defaultLayers);
   const [buildingTransparency, setBuildingTransparency] = useState<number>(0);
   const [explodeFactor, setExplodeFactor] = useState<number>(0);
-  const [basemap, setBasemap] = useState<BasemapMode>('satellite');
+  const [basemap, setBasemap] = useState<BasemapMode>('light');
   const [activeTool, setActiveTool] = useState<ToolMode>('select');
   const [isLayersPanelOpen, setIsLayersPanelOpen] = useState<boolean>(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
@@ -120,16 +122,18 @@ export const CadastreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const loadInitialData = async () => {
     try {
-      const [jList, uProfile, pStatus, initEntity] = await Promise.all([
+      const [jList, uProfile, pStatus, rQueue, initEntity] = await Promise.all([
         cadastreApi.getJurisdictions(),
         cadastreApi.getUserProfile(),
         cadastreApi.getPipelineStatus(),
-        cadastreApi.getEntityDetails('B12_F3_U304')
+        cadastreApi.getReviewQueue(),
+        cadastreApi.getEntityDetails('BLDG_ALPHA_F3_U302')
       ]);
       setJurisdictions(jList);
       if (jList.length > 0) setActiveJurisdiction(jList[0]);
       setUser(uProfile);
       setPipelineStatus(pStatus);
+      setReviewQueueCount(rQueue.length);
       setSelectedEntity(initEntity);
       if (initEntity && initEntity.building_id) {
         setSelectedBuildingId(initEntity.building_id);
@@ -202,6 +206,7 @@ export const CadastreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         activeJurisdiction,
         setActiveJurisdiction,
         user,
+        reviewQueueCount,
         pipelineStatus,
         layers,
         toggleLayer,

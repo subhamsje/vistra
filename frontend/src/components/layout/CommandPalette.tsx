@@ -53,22 +53,22 @@ export const CommandPalette: React.FC = () => {
   if (!isCommandPaletteOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-start justify-center pt-24 z-50 animate-in fade-in duration-150">
-      <div className="w-full max-w-xl bg-[#0d1321] border border-white/10 rounded-2xl shadow-2xl overflow-hidden flex flex-col text-xs">
+    <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-start justify-center pt-24 z-50 animate-in fade-in duration-150">
+      <div className="w-full max-w-xl bg-white/95 backdrop-blur-2xl border border-slate-200/90 rounded-2xl shadow-2xl overflow-hidden flex flex-col text-xs">
         {/* Input Bar */}
-        <div className="h-12 px-4 border-b border-white/10 flex items-center space-x-3 bg-slate-900/50">
-          <Search className="w-4 h-4 text-blue-400 shrink-0" />
+        <div className="h-12 px-4 border-b border-slate-200/80 flex items-center space-x-3 bg-white">
+          <Search className="w-4 h-4 text-blue-600 shrink-0" />
           <input
             type="text"
             autoFocus
             placeholder="Type a command, ULPIN, building, or parcel..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className="flex-1 bg-transparent border-none outline-none text-slate-100 placeholder-slate-500 text-xs"
+            className="flex-1 bg-transparent border-none outline-none text-slate-800 placeholder-slate-400 text-xs"
           />
           <button 
             onClick={() => setIsCommandPaletteOpen(false)}
-            className="text-slate-500 hover:text-white p-1 rounded"
+            className="text-slate-400 hover:text-slate-600 p-1 rounded-lg transition"
           >
             <X className="w-4 h-4" />
           </button>
@@ -78,7 +78,7 @@ export const CommandPalette: React.FC = () => {
         <div className="max-h-80 overflow-y-auto p-2 space-y-1 custom-scrollbar">
           {results.length > 0 ? (
             <div>
-              <div className="text-[10px] text-slate-500 px-3 py-1 font-bold uppercase tracking-wider">Properties & Identifiers</div>
+              <div className="text-[10px] text-slate-400 px-3 py-1 font-semibold uppercase tracking-wider">Properties & Identifiers</div>
               {results.map((r) => (
                 <button
                   key={r.id}
@@ -86,13 +86,13 @@ export const CommandPalette: React.FC = () => {
                     setSelectedEntityId(r.id);
                     setIsCommandPaletteOpen(false);
                   }}
-                  className="w-full px-3 py-2 rounded-lg flex items-center justify-between text-left hover:bg-slate-800 text-slate-200 transition"
+                  className="w-full px-3 py-2 rounded-xl flex items-center justify-between text-left hover:bg-slate-100/80 text-slate-700 transition"
                 >
                   <div>
-                    <div className="font-semibold text-white">{r.name}</div>
-                    <div className="font-mono text-[10px] text-cyan-400">{r.ulpin_3d}</div>
+                    <div className="font-semibold text-slate-900">{r.name}</div>
+                    <div className="font-mono text-[10px] text-blue-600">{r.ulpin_3d}</div>
                   </div>
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 font-medium">
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-semibold border border-blue-100">
                     {r.entity_type}
                   </span>
                 </button>
@@ -100,51 +100,51 @@ export const CommandPalette: React.FC = () => {
             </div>
           ) : (
             <div className="space-y-1">
-              <div className="text-[10px] text-slate-500 px-3 py-1 font-bold uppercase tracking-wider">Quick Navigation</div>
+              <div className="text-[10px] text-slate-400 px-3 py-1 font-semibold uppercase tracking-wider">Quick Navigation</div>
               
               <button
                 onClick={() => { setActiveView('3d_cadastre'); setIsCommandPaletteOpen(false); }}
-                className="w-full px-3 py-2 rounded-lg flex items-center space-x-3 text-slate-300 hover:bg-slate-800 transition"
+                className="w-full px-3 py-2 rounded-xl flex items-center space-x-3 text-slate-700 hover:bg-slate-100/80 transition"
               >
-                <Box className="w-4 h-4 text-blue-400" />
-                <span>Open 3D Cadastre Workspace</span>
+                <Box className="w-4 h-4 text-blue-600" />
+                <span className="font-medium">Open 3D Cadastre Workspace</span>
               </button>
 
               <button
                 onClick={() => { setActiveView('ulpin_registry'); setIsCommandPaletteOpen(false); }}
-                className="w-full px-3 py-2 rounded-lg flex items-center space-x-3 text-slate-300 hover:bg-slate-800 transition"
+                className="w-full px-3 py-2 rounded-xl flex items-center space-x-3 text-slate-700 hover:bg-slate-100/80 transition"
               >
-                <FileCode className="w-4 h-4 text-cyan-400" />
-                <span>Search ULPIN Registry</span>
+                <FileCode className="w-4 h-4 text-blue-600" />
+                <span className="font-medium">Search ULPIN Registry</span>
               </button>
 
               <button
                 onClick={() => { setActiveView('validation'); setIsCommandPaletteOpen(false); }}
-                className="w-full px-3 py-2 rounded-lg flex items-center space-x-3 text-slate-300 hover:bg-slate-800 transition"
+                className="w-full px-3 py-2 rounded-xl flex items-center space-x-3 text-slate-700 hover:bg-slate-100/80 transition"
               >
-                <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                <span>View Cadastral Topology Validation</span>
+                <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                <span className="font-medium">View Cadastral Topology Validation</span>
               </button>
 
               <button
                 onClick={() => { setActiveView('review_queue'); setIsCommandPaletteOpen(false); }}
-                className="w-full px-3 py-2 rounded-lg flex items-center space-x-3 text-slate-300 hover:bg-slate-800 transition"
+                className="w-full px-3 py-2 rounded-xl flex items-center space-x-3 text-slate-700 hover:bg-slate-100/80 transition"
               >
-                <ClipboardCheck className="w-4 h-4 text-rose-400" />
-                <span>Open Human Review Queue</span>
+                <ClipboardCheck className="w-4 h-4 text-rose-600" />
+                <span className="font-medium">Open Human Review Queue</span>
               </button>
 
-              <div className="text-[10px] text-slate-500 px-3 py-1 font-bold uppercase tracking-wider pt-2">Spatial Actions</div>
+              <div className="text-[10px] text-slate-400 px-3 py-1 font-semibold uppercase tracking-wider pt-2">Spatial Actions</div>
 
               <button
                 onClick={() => {
                   setExplodeFactor(explodeFactor > 0 ? 0 : 2.5);
                   setIsCommandPaletteOpen(false);
                 }}
-                className="w-full px-3 py-2 rounded-lg flex items-center space-x-3 text-slate-300 hover:bg-slate-800 transition"
+                className="w-full px-3 py-2 rounded-xl flex items-center space-x-3 text-slate-700 hover:bg-slate-100/80 transition"
               >
-                <Boxes className="w-4 h-4 text-purple-400" />
-                <span>Toggle Vertical Floor Explosion</span>
+                <Boxes className="w-4 h-4 text-purple-600" />
+                <span className="font-medium">Toggle Vertical Floor Explosion</span>
               </button>
 
               <button
@@ -152,10 +152,10 @@ export const CommandPalette: React.FC = () => {
                   toggleLayer('underground');
                   setIsCommandPaletteOpen(false);
                 }}
-                className="w-full px-3 py-2 rounded-lg flex items-center space-x-3 text-slate-300 hover:bg-slate-800 transition"
+                className="w-full px-3 py-2 rounded-xl flex items-center space-x-3 text-slate-700 hover:bg-slate-100/80 transition"
               >
-                <Layers className="w-4 h-4 text-pink-400" />
-                <span>Toggle Underground Infrastructure Layer</span>
+                <Layers className="w-4 h-4 text-indigo-600" />
+                <span className="font-medium">Toggle Underground Infrastructure Layer</span>
               </button>
 
               <button
@@ -163,19 +163,19 @@ export const CommandPalette: React.FC = () => {
                   triggerFlyTo([77.6255, 12.9356]);
                   setIsCommandPaletteOpen(false);
                 }}
-                className="w-full px-3 py-2 rounded-lg flex items-center space-x-3 text-slate-300 hover:bg-slate-800 transition"
+                className="w-full px-3 py-2 rounded-xl flex items-center space-x-3 text-slate-700 hover:bg-slate-100/80 transition"
               >
-                <RotateCcw className="w-4 h-4 text-yellow-400" />
-                <span>Reset Camera to District Center</span>
+                <RotateCcw className="w-4 h-4 text-amber-600" />
+                <span className="font-medium">Reset Camera to District Center</span>
               </button>
             </div>
           )}
         </div>
 
         {/* Footer */}
-        <div className="h-8 px-4 bg-slate-950/60 border-t border-white/5 flex items-center justify-between text-[10px] text-slate-500">
-          <span>Use <strong>Esc</strong> to close</span>
-          <span>VISTRA Mission Control</span>
+        <div className="h-8 px-4 bg-slate-50 border-t border-slate-200/80 flex items-center justify-between text-[10px] text-slate-500">
+          <span>Use <strong className="text-slate-700 font-semibold">Esc</strong> to close</span>
+          <span>VISTRA Spatial Control</span>
         </div>
       </div>
     </div>

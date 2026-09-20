@@ -141,7 +141,7 @@ export interface LayerVisibilityState {
   validation: boolean;
 }
 
-export type BasemapMode = 'satellite' | 'streets' | 'terrain' | 'lidar' | 'night' | 'master_plan';
+export type BasemapMode = 'light' | 'satellite' | 'streets' | 'terrain' | 'master_plan';
 export type ToolMode = 'select' | 'measure' | 'section' | 'explode' | 'compare' | 'layers' | 'dim' | 'basemap';
 export type NavView = '3d_cadastre' | 'overview' | 'parcels' | 'buildings' | 'floors_units' | 'underground' | 'ulpin_registry' | 'analysis' | 'validation' | 'review_queue' | 'data_sources' | 'audit_trail' | 'settings';
 export type CadastralViewMode = 'REALITY' | 'ANALYSIS';

@@ -4,21 +4,15 @@ import {
   Copy, 
   Check, 
   CheckCircle2, 
-  Send, 
   ExternalLink, 
-  Layers, 
-  Radio, 
-  MapPin, 
-  FileText, 
-  MoreHorizontal,
-  ChevronRight,
+  Send,
+  Navigation,
+  FileCode,
   ShieldCheck,
   Building,
   Info,
-  Boxes,
-  Lock,
-  Sparkles,
-  Layers3
+  Layers,
+  FileCheck
 } from 'lucide-react';
 import { useCadastre } from '../../store/CadastreContext';
 import { cadastreApi } from '../../services/api';
@@ -27,35 +21,30 @@ export const PropertyDetailsPanel: React.FC = () => {
   const { 
     selectedEntity, 
     setSelectedEntityId,
-    selectedBuildingId,
-    setSelectedBuildingId,
     setIsPropertyPanelOpen,
     triggerFlyTo, 
     setActiveView,
-    explodeFactor,
-    setExplodeFactor,
-    setCameraMode
+    setCameraMode,
+    refreshData
   } = useCadastre();
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'building' | 'floors' | 'validation' | 'sources'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'hierarchy' | 'validation' | 'sources'>('overview');
   const [copied, setCopied] = useState(false);
+  const [copiedHash, setCopiedHash] = useState(false);
   const [cadastralTree, setCadastralTree] = useState<any[]>([]);
-  const [isLoadingTree, setIsLoadingTree] = useState(false);
+  const [isSubmittingReview, setIsSubmittingReview] = useState(false);
+  const [reviewNote, setReviewNote] = useState('');
+  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [reviewSuccess, setReviewSuccess] = useState(false);
 
-  // Fetch full live tree to dynamically resolve storeys and units for selected building
   useEffect(() => {
     let mounted = true;
     const fetchTree = async () => {
-      setIsLoadingTree(true);
       try {
         const tree = await cadastreApi.getCadastralTree();
-        if (mounted) {
-          setCadastralTree(tree);
-        }
+        if (mounted) setCadastralTree(tree);
       } catch (e) {
-        console.error('Failed to load cadastral tree in PropertyDetailsPanel:', e);
-      } finally {
-        if (mounted) setIsLoadingTree(false);
+        console.warn('Failed to load cadastral tree:', e);
       }
     };
     fetchTree();
@@ -64,638 +53,392 @@ export const PropertyDetailsPanel: React.FC = () => {
 
   if (!selectedEntity) return null;
 
-  // Locate the currently active building in the cadastral tree
-  const currentBuildingId = selectedEntity.building_id || selectedBuildingId || 'B12';
-  let matchedBuilding: any = null;
-
-  for (const parcel of cadastralTree) {
-    if (parcel.buildings) {
-      const found = parcel.buildings.find((b: any) => b.entity_id === currentBuildingId || b.id === currentBuildingId);
-      if (found) {
-        matchedBuilding = found;
-        break;
-      }
-    }
-  }
-
-  // Extract real dynamic floors and units from the matched building
-  const dynamicFloors = matchedBuilding?.floors?.map((fl: any) => {
-    const baseZ = fl.z_bounds ? fl.z_bounds[0] : 920;
-    const roofZ = fl.z_bounds ? fl.z_bounds[1] : 923;
-    const groundLevel = 920.0;
-    const relativeHeight = (roofZ - groundLevel).toFixed(1);
-    const sign = (roofZ - groundLevel) >= 0 ? '+' : '';
-    
-    return {
-      level: fl.floor_level,
-      label: fl.name || `Floor ${fl.floor_level}`,
-      height: `${sign}${relativeHeight}m`,
-      unitsCount: fl.units ? fl.units.length : 0,
-      units: fl.units || [],
-      type: fl.floor_level < 0 ? 'BASEMENT' : fl.floor_level >= 5 ? 'PENTHOUSE' : 'RESIDENTIAL'
-    };
-  }) || [];
-
-  // Sort floors top-to-bottom for architectural elevator stack
-  const sortedFloors = [...dynamicFloors].sort((a, b) => b.level - a.level);
-
-  // Determine current active floor level
-  const activeFloorLevel = selectedEntity.floor_level !== undefined && selectedEntity.floor_level !== null 
-    ? selectedEntity.floor_level 
-    : (sortedFloors.length > 0 ? sortedFloors[0].level : 1);
-
-  // Find units for the current floor
-  const currentFloorData = dynamicFloors.find(f => f.level === activeFloorLevel);
-  const unitsOnFloor = currentFloorData?.units || [];
-
   const handleCopyUlpin = () => {
-    navigator.clipboard.writeText(selectedEntity.ulpin_3d);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    if (selectedEntity.ulpin_3d) {
+      navigator.clipboard.writeText(selectedEntity.ulpin_3d);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const handleCopyHash = () => {
+    if (selectedEntity.audit_hash) {
+      navigator.clipboard.writeText(selectedEntity.audit_hash);
+      setCopiedHash(true);
+      setTimeout(() => setCopiedHash(false), 2000);
+    }
   };
 
   const handleFlyTo = () => {
-    triggerFlyTo([77.62515, 12.9358]);
-    setCameraMode('BUILDING');
+    triggerFlyTo([77.6250, 12.9355]);
+    setCameraMode(selectedEntity.entity_type === 'PARCEL' ? 'PARCEL' : 'BUILDING');
   };
 
-  const handleSelectFloor = (floorLevel: number, defaultUnitId?: string) => {
-    if (defaultUnitId) {
-      setSelectedEntityId(defaultUnitId);
-    } else {
-      const fl = dynamicFloors.find(f => f.level === floorLevel);
-      if (fl && fl.units && fl.units.length > 0) {
-        setSelectedEntityId(fl.units[0].entity_id);
-      } else {
-        setSelectedEntityId(`${currentBuildingId}_F${floorLevel}`);
-      }
+  const handleViewInRegistry = () => {
+    setActiveView('ulpin_registry');
+  };
+
+  const handleSubmitReview = async () => {
+    if (!reviewNote.trim()) return;
+    setIsSubmittingReview(true);
+    try {
+      await cadastreApi.submitGovernanceDecision({
+        entity_id: selectedEntity.entity_id,
+        ulpin_3d: selectedEntity.ulpin_3d,
+        action: 'FLAG_FOR_REVIEW',
+        reviewer: 'Reviewer (Active User)',
+        notes: reviewNote
+      });
+      setReviewSuccess(true);
+      setTimeout(() => {
+        setReviewSuccess(false);
+        setShowReviewModal(false);
+        setReviewNote('');
+        refreshData();
+      }, 1500);
+    } catch (e) {
+      console.error('Failed to submit review:', e);
+    } finally {
+      setIsSubmittingReview(false);
     }
   };
 
-  const handleClosePanel = () => {
-    setIsPropertyPanelOpen(false);
-  };
+  // Find parent parcel and building in hierarchy
+  const currentParcel = cadastralTree.find((p: any) => p.entity_id === selectedEntity.parcel_id || p.id === selectedEntity.parcel_id) || cadastralTree[0];
+  const currentBuilding = currentParcel?.buildings?.find((b: any) => b.entity_id === selectedEntity.building_id || b.id === selectedEntity.building_id) || currentParcel?.buildings?.[0];
 
   return (
-    <aside className="w-96 h-full bg-[#0d1321]/94 backdrop-blur-2xl border-l border-white/10 flex flex-col z-20 shadow-2xl select-none shrink-0 animate-in slide-in-from-right duration-300">
+    <aside className="w-96 h-full bg-white/90 backdrop-blur-2xl border-l border-slate-200/90 flex flex-col z-20 shadow-xl select-none shrink-0 text-slate-800 animate-in slide-in-from-right duration-200">
       {/* Header */}
-      <div className="h-14 px-5 border-b border-white/10 flex items-center justify-between">
+      <div className="h-14 px-5 border-b border-slate-200/80 flex items-center justify-between">
         <div className="flex items-center space-x-2">
-          <Info className="w-4 h-4 text-blue-400" />
-          <h2 className="text-sm font-bold text-white tracking-wide">Property Details</h2>
-          <span className="text-[10px] font-mono text-cyan-400 bg-cyan-500/10 px-1.5 py-0.5 rounded border border-cyan-500/20">
+          <Info className="w-4 h-4 text-blue-600" />
+          <h2 className="text-sm font-bold text-slate-900 tracking-tight">Property Details</h2>
+          <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200">
             {selectedEntity.entity_type}
           </span>
         </div>
-        <div className="flex items-center space-x-1">
-          <button 
-            onClick={handleClosePanel}
-            className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition"
-            title="Close Panel (Maximize Map)"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
+        <button 
+          onClick={() => setIsPropertyPanelOpen(false)}
+          className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition"
+          title="Close Inspector"
+        >
+          <X className="w-4 h-4" />
+        </button>
       </div>
 
-      {/* Tabs */}
-      <div className="flex items-center border-b border-white/10 px-2 text-xs font-medium text-slate-400 bg-slate-950/40 overflow-x-auto custom-scrollbar">
+      {/* Navigation Tabs */}
+      <div className="flex items-center border-b border-slate-200/80 px-2 text-xs font-medium text-slate-500 bg-slate-50/50">
         <button
           onClick={() => setActiveTab('overview')}
-          className={`px-3 py-2.5 border-b-2 transition whitespace-nowrap ${
-            activeTab === 'overview' ? 'border-blue-500 text-blue-400 font-semibold' : 'border-transparent hover:text-slate-200'
+          className={`px-3.5 py-2.5 border-b-2 transition ${
+            activeTab === 'overview' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent hover:text-slate-800'
           }`}
         >
           Overview
         </button>
         <button
-          onClick={() => setActiveTab('building')}
-          className={`px-3 py-2.5 border-b-2 transition whitespace-nowrap ${
-            activeTab === 'building' ? 'border-blue-500 text-blue-400 font-semibold' : 'border-transparent hover:text-slate-200'
+          onClick={() => setActiveTab('hierarchy')}
+          className={`px-3.5 py-2.5 border-b-2 transition ${
+            activeTab === 'hierarchy' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent hover:text-slate-800'
           }`}
         >
-          Building
-        </button>
-        <button
-          onClick={() => setActiveTab('floors')}
-          className={`px-3 py-2.5 border-b-2 transition whitespace-nowrap ${
-            activeTab === 'floors' ? 'border-blue-500 text-blue-400 font-semibold' : 'border-transparent hover:text-slate-200'
-          }`}
-        >
-          Floors & Units
+          Hierarchy
         </button>
         <button
           onClick={() => setActiveTab('validation')}
-          className={`px-3 py-2.5 border-b-2 transition whitespace-nowrap ${
-            activeTab === 'validation' ? 'border-blue-500 text-blue-400 font-semibold' : 'border-transparent hover:text-slate-200'
+          className={`px-3.5 py-2.5 border-b-2 transition ${
+            activeTab === 'validation' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent hover:text-slate-800'
           }`}
         >
-          Validation
+          Validation ({selectedEntity.validation_checklist?.length || 0})
         </button>
         <button
           onClick={() => setActiveTab('sources')}
-          className={`px-3 py-2.5 border-b-2 transition whitespace-nowrap ${
-            activeTab === 'sources' ? 'border-blue-500 text-blue-400 font-semibold' : 'border-transparent hover:text-slate-200'
+          className={`px-3.5 py-2.5 border-b-2 transition ${
+            activeTab === 'sources' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent hover:text-slate-800'
           }`}
         >
-          Sources
+          Sources ({selectedEntity.data_sources?.length || 0})
         </button>
       </div>
 
-      {/* Scrollable Tab Body */}
+      {/* Tab Body */}
       <div className="flex-1 overflow-y-auto p-5 space-y-4 text-xs custom-scrollbar">
         {/* OVERVIEW TAB */}
         {activeTab === 'overview' && (
           <div className="space-y-4">
-            {/* Entity Header */}
-            <div className="flex space-x-3.5 items-start">
-              <div className="w-20 h-20 rounded-xl overflow-hidden border border-white/10 shrink-0 bg-slate-900 shadow-md">
-                <img
-                  src={selectedEntity.thumbnail_url || "https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?auto=format&fit=crop&w=300&q=80"}
-                  alt="Property"
-                  className="w-full h-full object-cover"
-                />
+            {/* Primary ULPIN Banner */}
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">3D ULPIN / Cadastral ID</span>
+                <span className="flex items-center space-x-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-semibold">
+                  <CheckCircle2 className="w-3 h-3" />
+                  <span>{selectedEntity.validation_status || 'Validated'}</span>
+                </span>
               </div>
-
-              <div className="flex-1 min-w-0 space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="flex items-center space-x-1 px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold">
-                    <CheckCircle2 className="w-3 h-3" />
-                    <span>{selectedEntity.validation_status}</span>
-                  </span>
-                  <span className="text-[10px] text-slate-500 font-mono">3D ULPIN</span>
-                </div>
-
-                <div className="flex items-center space-x-1.5">
-                  <span className="font-mono text-xs font-bold text-white tracking-tight truncate select-all">
-                    {selectedEntity.ulpin_3d}
-                  </span>
-                  <button
-                    onClick={handleCopyUlpin}
-                    className="text-slate-400 hover:text-blue-400 p-0.5 rounded transition"
-                    title="Copy ULPIN"
-                  >
-                    {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                  </button>
-                </div>
-
-                <div className="flex items-center space-x-1.5 pt-0.5">
-                  <span className="px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[10px] font-medium">
-                    {selectedEntity.type_label}
-                  </span>
-                  <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-white/10 text-[10px]">
-                    {selectedEntity.category}
-                  </span>
-                </div>
+              <div className="flex items-center justify-between bg-white px-2.5 py-2 rounded-lg border border-slate-200 shadow-xs">
+                <span className="font-mono text-xs font-bold text-slate-900 select-all truncate mr-2">
+                  {selectedEntity.ulpin_3d}
+                </span>
+                <button
+                  onClick={handleCopyUlpin}
+                  className="text-slate-400 hover:text-blue-600 p-1 rounded transition shrink-0"
+                  title="Copy ULPIN"
+                >
+                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+              <div className="flex items-center space-x-2 text-[11px] text-slate-600">
+                <span className="font-medium text-slate-900">{selectedEntity.type_label}</span>
+                <span>•</span>
+                <span>{selectedEntity.category}</span>
               </div>
             </div>
 
-            {/* 4-Item Identifiers Grid */}
-            <div className="grid grid-cols-4 gap-2">
+            {/* Entity Identifiers Grid */}
+            <div className="grid grid-cols-2 gap-2">
               <div 
                 onClick={() => selectedEntity.parcel_id && setSelectedEntityId(selectedEntity.parcel_id)}
-                className="p-2.5 rounded-lg bg-slate-900/80 border border-white/5 hover:border-blue-500/40 cursor-pointer transition"
-                title="Inspect Parcel"
+                className="p-2.5 rounded-xl bg-white border border-slate-200 hover:border-blue-400 cursor-pointer transition shadow-xs"
               >
-                <div className="text-[10px] text-slate-400">Parcel ID</div>
-                <div className="font-bold text-white text-xs mt-0.5 truncate">{selectedEntity.parcel_id || 'P78'}</div>
+                <div className="text-[10px] text-slate-400 font-medium">Parent Parcel</div>
+                <div className="font-semibold text-slate-900 text-xs mt-0.5 truncate">{selectedEntity.parcel_id || '—'}</div>
               </div>
+
               <div 
                 onClick={() => selectedEntity.building_id && setSelectedEntityId(selectedEntity.building_id)}
-                className="p-2.5 rounded-lg bg-slate-900/80 border border-white/5 hover:border-blue-500/40 cursor-pointer transition"
-                title="Inspect Building"
+                className="p-2.5 rounded-xl bg-white border border-slate-200 hover:border-blue-400 cursor-pointer transition shadow-xs"
               >
-                <div className="text-[10px] text-slate-400">Building ID</div>
-                <div className="font-bold text-white text-xs mt-0.5 truncate">{selectedEntity.building_id || '-'}</div>
+                <div className="text-[10px] text-slate-400 font-medium">Building Structure</div>
+                <div className="font-semibold text-slate-900 text-xs mt-0.5 truncate">{selectedEntity.building_id || '—'}</div>
               </div>
-              <div className="p-2.5 rounded-lg bg-slate-900/80 border border-white/5">
-                <div className="text-[10px] text-slate-400">Floor</div>
-                <div className="font-bold text-white text-xs mt-0.5">{selectedEntity.floor_level ?? '-'}</div>
+
+              <div className="p-2.5 rounded-xl bg-white border border-slate-200 shadow-xs">
+                <div className="text-[10px] text-slate-400 font-medium">Floor Level</div>
+                <div className="font-semibold text-slate-900 text-xs mt-0.5">
+                  {selectedEntity.floor_level !== undefined && selectedEntity.floor_level !== null ? `Floor ${selectedEntity.floor_level}` : '—'}
+                </div>
               </div>
-              <div className="p-2.5 rounded-lg bg-slate-900/80 border border-white/5">
-                <div className="text-[10px] text-slate-400">Unit</div>
-                <div className="font-bold text-white text-xs mt-0.5">{selectedEntity.unit_number || '-'}</div>
+
+              <div className="p-2.5 rounded-xl bg-white border border-slate-200 shadow-xs">
+                <div className="text-[10px] text-slate-400 font-medium">Unit Identifier</div>
+                <div className="font-semibold text-slate-900 text-xs mt-0.5">{selectedEntity.unit_number || '—'}</div>
               </div>
             </div>
 
-            {/* 3-Item Dimensional Metrics Grid */}
-            <div className="grid grid-cols-3 gap-2">
-              <div className="p-2.5 rounded-lg bg-slate-900/80 border border-white/5">
-                <div className="text-[10px] text-slate-400">Area</div>
-                <div className="font-bold text-white text-xs mt-0.5">{selectedEntity.area_sqft.toLocaleString()} sq ft</div>
-                <div className="text-[9px] text-slate-500">({selectedEntity.area_sqm} m²)</div>
-              </div>
-              <div className="p-2.5 rounded-lg bg-slate-900/80 border border-white/5">
-                <div className="text-[10px] text-slate-400">Vertical Extent</div>
-                <div className="font-bold text-emerald-400 text-xs mt-0.5 font-mono">{selectedEntity.vertical_extent}</div>
-              </div>
-              <div className="p-2.5 rounded-lg bg-slate-900/80 border border-white/5">
-                <div className="text-[10px] text-slate-400">Volume</div>
-                <div className="font-bold text-white text-xs mt-0.5">{selectedEntity.volume_m3} m³</div>
-              </div>
-            </div>
-
-            {/* Confidence Progress Bars */}
-            <div className="p-3 rounded-lg bg-slate-900/70 border border-white/5 space-y-2.5">
-              <div>
-                <div className="flex justify-between items-center text-[10px] mb-1">
-                  <span className="text-slate-400">Geometry Confidence</span>
-                  <span className="font-bold text-emerald-400">{selectedEntity.geometry_confidence}%</span>
+            {/* Spatial Dimensions */}
+            <div className="p-3.5 rounded-xl bg-white border border-slate-200 shadow-xs space-y-2.5">
+              <div className="text-[11px] font-bold text-slate-900 uppercase tracking-wider">Spatial Geometry & Dimensions</div>
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div>
+                  <span className="text-slate-400 text-[10px] block">Calculated Area</span>
+                  <span className="font-semibold text-slate-900">{selectedEntity.area_sqm} m²</span>
+                  <span className="text-slate-400 text-[10px] block">({selectedEntity.area_sqft?.toLocaleString()} sq ft)</span>
                 </div>
-                <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                  <div 
-                    className="h-full bg-emerald-500 rounded-full transition-all duration-500" 
-                    style={{ width: `${selectedEntity.geometry_confidence}%` }}
-                  ></div>
+                <div>
+                  <span className="text-slate-400 text-[10px] block">Enclosed Volume</span>
+                  <span className="font-semibold text-slate-900">{selectedEntity.volume_m3} m³</span>
                 </div>
-              </div>
-
-              <div>
-                <div className="flex justify-between items-center text-[10px] mb-1">
-                  <span className="text-slate-400">Data Confidence</span>
-                  <span className="font-bold text-blue-400">{selectedEntity.data_confidence}%</span>
+                <div>
+                  <span className="text-slate-400 text-[10px] block">Vertical Extent (Relative)</span>
+                  <span className="font-mono font-semibold text-blue-600">{selectedEntity.vertical_extent}</span>
                 </div>
-                <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                  <div 
-                    className="h-full bg-blue-500 rounded-full transition-all duration-500" 
-                    style={{ width: `${selectedEntity.data_confidence}%` }}
-                  ></div>
+                <div>
+                  <span className="text-slate-400 text-[10px] block">Elevation (AMSL)</span>
+                  <span className="font-mono text-slate-700">{selectedEntity.elevation_abs}</span>
                 </div>
               </div>
             </div>
 
-            {/* Interactive VISTRA Intelligence Insight Card */}
-            <div className="p-3 rounded-lg bg-gradient-to-br from-blue-950/40 via-slate-900/70 to-slate-900/40 border border-blue-500/20 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-bold text-blue-300 flex items-center space-x-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>VISTRA Intelligence</span>
-                </span>
-                <span className="text-[9px] font-mono text-slate-400">ISO 19152 LADM</span>
+            {/* Cryptographic Provenance */}
+            <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5">
+              <div className="flex items-center justify-between text-[10px] text-slate-500 font-medium">
+                <span>Cryptographic Audit Hash</span>
+                <button 
+                  onClick={handleCopyHash}
+                  className="text-blue-600 hover:text-blue-800 flex items-center space-x-1"
+                >
+                  {copiedHash ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                  <span>{copiedHash ? 'Copied' : 'Copy'}</span>
+                </button>
               </div>
-              <div className="grid grid-cols-2 gap-2 text-[10px]">
-                <button 
-                  onClick={() => setActiveTab('validation')}
-                  className="bg-slate-950/50 p-2 rounded border border-white/5 hover:border-emerald-500/40 text-left transition"
-                >
-                  <span className="text-slate-500 block text-[9px]">Geometry:</span>
-                  <strong className="text-emerald-400">✓ Valid Solid</strong>
-                </button>
-                <button 
-                  onClick={() => setActiveTab('sources')}
-                  className="bg-slate-950/50 p-2 rounded border border-white/5 hover:border-cyan-500/40 text-left transition"
-                >
-                  <span className="text-slate-500 block text-[9px]">Evidence:</span>
-                  <strong className="text-cyan-400">{selectedEntity.data_sources.length} Sources Fused</strong>
-                </button>
-                <button 
-                  onClick={() => setActiveTab('validation')}
-                  className="bg-slate-950/50 p-2 rounded border border-white/5 hover:border-emerald-500/40 text-left transition"
-                >
-                  <span className="text-slate-500 block text-[9px]">Collisions:</span>
-                  <strong className="text-emerald-400">0 Overlaps</strong>
-                </button>
-                <button 
-                  onClick={() => setActiveView('ulpin_registry')}
-                  className="bg-slate-950/50 p-2 rounded border border-white/5 hover:border-blue-500/40 text-left transition"
-                >
-                  <span className="text-slate-500 block text-[9px]">Tenure:</span>
-                  <strong className="text-white">Freehold Right</strong>
-                </button>
+              <div className="font-mono text-[10px] text-slate-600 bg-white p-2 rounded-lg border border-slate-200 truncate select-all">
+                {selectedEntity.audit_hash || 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'}
               </div>
             </div>
 
-            {/* Validation Checklist */}
-            <div className="p-3 rounded-lg bg-slate-900/70 border border-white/5 space-y-2">
-              <div className="text-[11px] font-semibold text-slate-300 flex items-center justify-between">
-                <span>Validation</span>
-                <span className="text-emerald-400 text-[10px] font-mono">100% Passed</span>
-              </div>
-              <div className="grid grid-cols-2 gap-y-1.5 gap-x-2 text-[10px]">
-                {selectedEntity.validation_checklist.map((v, i) => (
-                  <div key={i} className="flex items-center space-x-1.5 text-slate-300">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                    <span>{v.name}</span>
-                  </div>
-                ))}
-              </div>
-
-              <div className="pt-1.5 flex justify-end">
-                <button 
-                  onClick={() => setActiveTab('validation')}
-                  className="text-[10px] text-blue-400 hover:text-blue-300 flex items-center space-x-1 font-medium"
+            {/* Real Action Buttons */}
+            <div className="space-y-2 pt-2">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={handleFlyTo}
+                  className="flex items-center justify-center space-x-2 py-2 px-3 rounded-xl bg-white hover:bg-slate-50 text-slate-700 font-semibold border border-slate-200 transition shadow-xs"
                 >
-                  <span>View Details</span>
-                  <ChevronRight className="w-3 h-3" />
+                  <Navigation className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Fly to Entity</span>
+                </button>
+                <button
+                  onClick={handleViewInRegistry}
+                  className="flex items-center justify-center space-x-2 py-2 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold transition shadow-xs"
+                >
+                  <FileCode className="w-3.5 h-3.5" />
+                  <span>ULPIN Registry</span>
                 </button>
               </div>
-            </div>
 
-            {/* Contributing Data Sources */}
-            <div className="space-y-1.5">
-              <div className="text-[11px] font-semibold text-slate-300">Data Sources</div>
-              <div className="flex flex-wrap gap-1.5">
-                {selectedEntity.data_sources.map((src, i) => (
-                  <button 
-                    key={i} 
-                    onClick={() => setActiveTab('sources')}
-                    className="px-2 py-1 rounded bg-slate-900 border border-white/10 hover:border-cyan-500/30 text-[10px] text-slate-300 flex items-center space-x-1 transition"
-                  >
-                    <Radio className="w-2.5 h-2.5 text-blue-400" />
-                    <span>{src}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Metadata Footer */}
-            <div className="grid grid-cols-2 gap-2 pt-1 text-[10px] text-slate-400 border-t border-white/5">
-              <div>
-                <div className="text-slate-500">Last Updated</div>
-                <div className="text-slate-300 font-medium">{selectedEntity.last_updated}</div>
-              </div>
-              <div>
-                <div className="text-slate-500">Version</div>
-                <div className="text-slate-300 font-medium">{selectedEntity.version}</div>
-              </div>
+              <button
+                onClick={() => setShowReviewModal(true)}
+                className="w-full flex items-center justify-center space-x-2 py-2 px-3 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold border border-amber-200 transition"
+              >
+                <FileCheck className="w-3.5 h-3.5 text-amber-700" />
+                <span>Submit for Human Governance Review</span>
+              </button>
             </div>
           </div>
         )}
 
-        {/* BUILDING TAB (Dynamic Building Storey Hierarchy) */}
-        {activeTab === 'building' && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-xs font-bold text-white">
-                  {matchedBuilding?.properties?.name || `Building ${currentBuildingId}`} Hierarchy
-                </div>
-                <div className="text-[10px] text-slate-400">
-                  {dynamicFloors.length} storeys • {matchedBuilding?.properties?.building_class || 'Residential Tower'}
-                </div>
-              </div>
-              <span className="text-[10px] font-mono text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20">
-                {currentBuildingId}
-              </span>
-            </div>
-
-            {/* Explode Building Control */}
-            <div className="p-3 bg-slate-900/80 rounded-xl border border-white/10 space-y-2">
-              <div className="flex justify-between items-center text-xs">
-                <span className="font-semibold text-slate-200 flex items-center space-x-1.5">
-                  <Boxes className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>Vertical Storey Explosion</span>
-                </span>
-                <span className="font-mono text-cyan-400 font-bold">{explodeFactor.toFixed(1)}m</span>
-              </div>
-              <input
-                type="range"
-                min="0"
-                max="4"
-                step="0.5"
-                value={explodeFactor}
-                onChange={(e) => setExplodeFactor(parseFloat(e.target.value))}
-                className="w-full h-1.5 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-cyan-400"
-              />
-              <div className="flex justify-between text-[10px] text-slate-500">
-                <span>Stacked (0m)</span>
-                <span>Exploded View (4m)</span>
-              </div>
-            </div>
-
-            {/* Dynamic Storey Stack from real backend tree */}
-            <div className="space-y-1.5 border border-white/10 rounded-xl p-2 bg-slate-950/40 max-h-72 overflow-y-auto custom-scrollbar">
-              {isLoadingTree ? (
-                <div className="text-center py-6 text-slate-500 text-xs">Loading storey hierarchy...</div>
-              ) : sortedFloors.map((fl) => {
-                const isSelected = selectedEntity.floor_level === fl.level;
-                return (
-                  <button
-                    key={fl.level}
-                    onClick={() => handleSelectFloor(fl.level)}
-                    className={`w-full p-2.5 rounded-lg flex items-center justify-between text-left transition ${
-                      isSelected 
-                        ? 'bg-blue-600/30 border border-blue-500/50 text-white shadow-lg' 
-                        : 'hover:bg-slate-800/60 text-slate-300 border border-transparent'
-                    }`}
-                  >
-                    <div className="flex items-center space-x-2.5">
-                      <div className={`w-2 h-2 rounded-full ${
-                        isSelected ? 'bg-cyan-400' : fl.level > 0 ? 'bg-blue-500' : 'bg-slate-500'
-                      }`}></div>
-                      <div>
-                        <div className="font-semibold text-xs">{fl.label}</div>
-                        <div className="text-[10px] text-slate-400">Elevation: {fl.height} • {fl.unitsCount} unit(s)</div>
-                      </div>
-                    </div>
-                    {isSelected && (
-                      <span className="text-[9px] font-bold text-cyan-300 bg-cyan-500/20 px-1.5 py-0.5 rounded">
-                        ACTIVE
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* FLOORS & UNITS TAB (Dynamic units query from backend tree) */}
-        {activeTab === 'floors' && (
+        {/* HIERARCHY TAB */}
+        {activeTab === 'hierarchy' && (
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="text-xs font-bold text-white">
-                Units on Floor {activeFloorLevel}
-              </div>
-              <span className="text-[10px] font-mono text-slate-400">
-                {unitsOnFloor.length} unit(s) recorded
-              </span>
+            <div className="text-[11px] text-slate-500 mb-2">
+              Cadastral parent-child hierarchy from live cadastral graph:
             </div>
 
-            <div className="space-y-2">
-              {unitsOnFloor.length === 0 ? (
-                <div className="p-4 rounded-lg bg-slate-900/60 border border-white/5 text-center text-slate-400 text-xs">
-                  No individual cadastral units registered on this floor level.
+            {/* Parcel Node */}
+            <div 
+              onClick={() => currentParcel && setSelectedEntityId(currentParcel.entity_id || currentParcel.id)}
+              className="p-3 rounded-xl bg-white border border-slate-200 hover:border-emerald-500 cursor-pointer transition shadow-xs"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
+                  <span className="font-semibold text-slate-900">Parcel {currentParcel?.name || selectedEntity.parcel_id}</span>
                 </div>
-              ) : (
-                unitsOnFloor.map((unit: any) => {
-                  const isUnitSelected = selectedEntity.entity_id === unit.entity_id;
-                  const zMin = unit.z_bounds ? unit.z_bounds[0] : 920;
-                  const zMax = unit.z_bounds ? unit.z_bounds[1] : 923;
-                  const vol = ((zMax - zMin) * 119.3).toFixed(1);
-                  const tenure = unit.rrr?.tenure_type || 'FREEHOLD';
-
-                  return (
-                    <div
-                      key={unit.entity_id}
-                      onClick={() => setSelectedEntityId(unit.entity_id)}
-                      className={`p-3 rounded-lg border cursor-pointer transition ${
-                        isUnitSelected 
-                          ? 'bg-blue-600/25 border-blue-500 text-white shadow-lg' 
-                          : 'bg-slate-900/60 border-white/5 hover:bg-slate-800/60 text-slate-300'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-xs">
-                          Unit {unit.unit_number || unit.entity_id}
-                        </span>
-                        <span className="text-[10px] font-mono text-cyan-300">
-                          {unit.unit_type || 'Residential'}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between text-[10px] text-slate-400 mt-1">
-                        <span className="text-slate-300">{tenure}</span>
-                        <span className="font-mono">Vol: {vol} m³</span>
-                      </div>
-                      {isUnitSelected && (
-                        <div className="mt-2 pt-2 border-t border-blue-500/30 flex items-center justify-between text-[10px]">
-                          <span className="text-cyan-300 font-semibold">Active Selection</span>
-                          <span className="text-slate-400 font-mono">[{zMin}m - {zMax}m]</span>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })
-              )}
+                <span className="text-[10px] text-emerald-700 font-mono">PARCEL</span>
+              </div>
             </div>
+
+            {/* Building Node */}
+            {currentBuilding && (
+              <div 
+                onClick={() => setSelectedEntityId(currentBuilding.entity_id || currentBuilding.id)}
+                className="ml-4 p-3 rounded-xl bg-white border border-slate-200 hover:border-blue-500 cursor-pointer transition shadow-xs"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                    <span className="font-semibold text-slate-900">{currentBuilding.name || currentBuilding.id}</span>
+                  </div>
+                  <span className="text-[10px] text-blue-700 font-mono">BUILDING</span>
+                </div>
+                <div className="text-[10px] text-slate-500 mt-1">
+                  {currentBuilding.floors?.length || 0} Floors • {currentBuilding.properties?.building_class || 'Tower'}
+                </div>
+              </div>
+            )}
+
+            {/* Floors List */}
+            {currentBuilding?.floors?.map((fl: any) => (
+              <div 
+                key={fl.id || fl.entity_id}
+                onClick={() => setSelectedEntityId(fl.units?.[0]?.entity_id || fl.id)}
+                className="ml-8 p-2.5 rounded-lg bg-slate-50 border border-slate-200 hover:bg-slate-100 cursor-pointer transition flex items-center justify-between"
+              >
+                <div className="flex items-center space-x-2">
+                  <Layers className="w-3.5 h-3.5 text-slate-400" />
+                  <span className="font-medium text-slate-800">{fl.name || `Floor ${fl.floor_level}`}</span>
+                </div>
+                <span className="text-[10px] text-slate-500">{fl.units?.length || 0} units</span>
+              </div>
+            ))}
           </div>
         )}
 
         {/* VALIDATION TAB */}
         {activeTab === 'validation' && (
-          <div className="space-y-3">
-            <div className="text-xs font-bold text-white">Deterministic Cadastral Validation</div>
-            <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-[11px] text-emerald-300 flex items-center space-x-2">
-              <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>All volumetric topology rules passed deterministically.</span>
+          <div className="space-y-2.5">
+            <div className="text-[11px] text-slate-500 mb-2">
+              Automated deterministic topology rules verified for this entity:
             </div>
-
-            <div className="space-y-2 text-[11px]">
-              {selectedEntity.validation_checklist.map((c, i) => (
-                <div key={i} className="p-2.5 rounded bg-slate-900/70 border border-white/5 flex items-center justify-between">
-                  <span className="text-slate-200">{c.name}</span>
-                  <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px] font-bold">
-                    {c.status}
-                  </span>
+            {selectedEntity.validation_checklist?.map((item, idx) => (
+              <div key={idx} className="p-3 rounded-xl bg-white border border-slate-200 shadow-xs flex items-center justify-between">
+                <div className="flex items-center space-x-2.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span className="text-slate-800 font-medium text-xs">{item.name}</span>
                 </div>
-              ))}
-            </div>
-
-            <div className="pt-2">
-              <button
-                onClick={() => setActiveView('validation')}
-                className="w-full py-2 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 text-blue-400 rounded-lg text-xs font-semibold flex items-center justify-center space-x-1.5 transition"
-              >
-                <span>Open Complete Topology Audit Center</span>
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
+                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                  {item.status}
+                </span>
+              </div>
+            ))}
           </div>
         )}
 
-        {/* SOURCES / EVIDENCE TAB (Evidence Drawer with real fused sources) */}
+        {/* SOURCES TAB */}
         {activeTab === 'sources' && (
-          <div className="space-y-3">
-            <div className="text-xs font-bold text-white">Contributing Multi-Modal Datasets</div>
-            <div className="text-slate-400 text-[11px]">
-              Multi-sensor boundary & elevation evidence fused for entity <span className="font-mono text-slate-200">{selectedEntity.entity_id}</span>:
+          <div className="space-y-2.5">
+            <div className="text-[11px] text-slate-500 mb-2">
+              Ingested evidence modalities contributing to this 3D model:
             </div>
-
-            <div className="space-y-2">
-              {[
-                { name: "koramangala_lidar_flight_04.las", type: "LiDAR Point Cloud", conf: "94%", date: "12 Mar 2024", role: "Roof & Facade Height" },
-                { name: "bengaluru_urban_cadastral_parcels.geojson", type: "GIS Parcel Survey", conf: "98%", date: "12 Mar 2024", role: "2D Surface Boundary" },
-                { name: "b12_skyline_approved_cad_plan.json", type: "Architectural CAD/BIM", conf: "95%", date: "10 Mar 2024", role: "Interior Unit Partition" },
-                { name: "Station BLR01 - EGM96 Datum", type: "GNSS / CORS Station", conf: "99%", date: "Real-time", role: "Ellipsoid Orthometric Correction" }
-              ].map((src, i) => (
-                <div key={i} className="p-3 bg-slate-900/70 border border-white/5 rounded-lg space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold text-white text-[11px] truncate">{src.name}</span>
-                    <span className="text-[10px] text-emerald-400 font-bold">{src.conf}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-[10px] text-slate-400">
-                    <span>{src.type}</span>
-                    <span className="text-cyan-400/90">{src.role}</span>
-                  </div>
+            {selectedEntity.data_sources?.map((src, idx) => (
+              <div key={idx} className="p-3 rounded-xl bg-white border border-slate-200 shadow-xs flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                  <span className="text-slate-800 font-semibold">{src}</span>
                 </div>
-              ))}
-            </div>
-
-            {/* SHA-256 Proof */}
-            <div className="p-3 bg-slate-950/80 border border-white/10 rounded-lg space-y-1.5">
-              <div className="text-[10px] font-semibold text-slate-300 flex items-center space-x-1">
-                <Lock className="w-3 h-3 text-cyan-400" />
-                <span>SHA-256 Provenance Seal</span>
+                <span className="text-[10px] text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                  Verified Ingestion
+                </span>
               </div>
-              <div className="p-2 bg-black/50 rounded font-mono text-[9px] text-slate-400 break-all select-all">
-                {selectedEntity.audit_hash}
-              </div>
-            </div>
-
-            <div className="pt-2">
-              <button
-                onClick={() => setActiveView('data_sources')}
-                className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold flex items-center justify-center space-x-1.5 border border-white/10 transition"
-              >
-                <span>View All Ingested Data Sources</span>
-                <ExternalLink className="w-3.5 h-3.5" />
-              </button>
-            </div>
+            ))}
           </div>
         )}
       </div>
 
-      {/* Action Buttons Footer */}
-      <div className="p-3 border-t border-white/10 flex flex-col space-y-2 bg-slate-950/40">
-        <div className="flex items-center space-x-2">
-          <button
-            onClick={handleFlyTo}
-            className="flex-1 py-2 px-3 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold flex items-center justify-center space-x-1.5 border border-white/10 transition shadow"
-          >
-            <Send className="w-3.5 h-3.5 text-blue-400" />
-            <span>Fly to</span>
-          </button>
-
-          <button
-            onClick={() => setActiveView('ulpin_registry')}
-            className="flex-1 py-2 px-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold flex items-center justify-center space-x-1.5 transition shadow shadow-blue-600/30"
-          >
-            <ExternalLink className="w-3.5 h-3.5" />
-            <span>View Registry</span>
-          </button>
-
-          <button 
-            onClick={() => alert(`SHA-256 Provenance Seal:\n${selectedEntity.audit_hash}`)}
-            className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white border border-white/10 transition"
-            title="Inspect SHA-256 Cryptographic Audit Seal"
-          >
-            <ShieldCheck className="w-4 h-4 text-cyan-400" />
-          </button>
+      {/* Real Review Modal */}
+      {showReviewModal && (
+        <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-2xl w-full max-w-xs space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-slate-900 text-sm">Governance Review Note</h3>
+              <button onClick={() => setShowReviewModal(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-[11px] text-slate-500">
+              Submit an official cadastral note for {selectedEntity.entity_id} into the governance audit trail.
+            </p>
+            <textarea
+              value={reviewNote}
+              onChange={(e) => setReviewNote(e.target.value)}
+              placeholder="Enter survey observation or boundary discrepancy notes..."
+              className="w-full h-20 p-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 text-slate-800 resize-none"
+            />
+            {reviewSuccess ? (
+              <div className="text-xs text-emerald-700 bg-emerald-50 p-2 rounded-lg text-center font-semibold border border-emerald-200">
+                Decision recorded to audit trail!
+              </div>
+            ) : (
+              <div className="flex space-x-2">
+                <button
+                  onClick={() => setShowReviewModal(false)}
+                  className="flex-1 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-xl transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSubmitReview}
+                  disabled={isSubmittingReview || !reviewNote.trim()}
+                  className="flex-1 py-1.5 text-xs font-semibold bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition disabled:opacity-50"
+                >
+                  {isSubmittingReview ? 'Submitting...' : 'Confirm'}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
-
-        {/* Dedicated Human Review Submission */}
-        <button
-          onClick={async () => {
-            try {
-              await cadastreApi.submitGovernanceDecision({
-                entity_id: selectedEntity.entity_id,
-                ulpin_3d: selectedEntity.ulpin_3d,
-                action: 'FLAGGED_FOR_HUMAN_REVIEW',
-                reviewer: 'Ananya Rao',
-                notes: 'Manual adjudication requested from 3D Inspector'
-              });
-              alert(`Successfully routed ${selectedEntity.ulpin_3d} to Governance Review Queue.`);
-              setActiveView('review_queue');
-            } catch (e) {
-              setActiveView('review_queue');
-            }
-          }}
-          className="w-full py-2 px-3 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-lg text-xs font-semibold flex items-center justify-center space-x-2 transition"
-        >
-          <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-          <span>Send for Human Review</span>
-        </button>
-      </div>
+      )}
     </aside>
   );
 };

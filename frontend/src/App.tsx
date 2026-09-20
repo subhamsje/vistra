@@ -8,6 +8,7 @@ import { MapToolbar } from './components/cesium/MapToolbar';
 import { LayerPanel } from './components/cesium/LayerPanel';
 import { BasemapSwitcher } from './components/cesium/BasemapSwitcher';
 import { PropertyDetailsPanel } from './components/panels/PropertyDetailsPanel';
+import { EvidenceFusionDrawer } from './components/panels/EvidenceFusionDrawer';
 import { BottomPipelineDock } from './components/panels/BottomPipelineDock';
 
 import { RegistryView } from './components/views/RegistryView';
@@ -21,7 +22,7 @@ const MainLayout: React.FC = () => {
   const { activeView, isPropertyPanelOpen, selectedEntity } = useCadastre();
 
   return (
-    <div className="flex flex-col w-screen h-screen overflow-hidden bg-[#0b0f19] text-slate-100 select-none">
+    <div className="flex flex-col w-screen h-screen overflow-hidden bg-slate-50 text-slate-800 select-none">
       {/* Universal Mission Control Topbar */}
       <Topbar />
 
@@ -74,6 +75,9 @@ const MainLayout: React.FC = () => {
           <BottomPipelineDock />
         </main>
       </div>
+
+      {/* Global Evidence Fusion Drawer */}
+      <EvidenceFusionDrawer />
 
       {/* Global Command Palette */}
       <CommandPalette />

@@ -80,6 +80,7 @@ export const CesiumViewer: React.FC = () => {
   const pointCloudPrimitivesRef = useRef<any>(null);
   const demPrimitivesRef = useRef<any>(null);
   const orbitListenerRef = useRef<any>(null);
+  const initialFramedRef = useRef<boolean>(false);
 
   const { 
     layers, 
@@ -224,13 +225,14 @@ export const CesiumViewer: React.FC = () => {
       try {
         Cesium.Ion.defaultAccessToken = '';
 
-        // Create initial imagery provider
+        // Create initial imagery provider with clean Positron light style
         let initialProvider: any = null;
         try {
           initialProvider = new Cesium.UrlTemplateImageryProvider({
-            url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+            url: 'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
+            subdomains: ['a', 'b', 'c', 'd'],
             maximumLevel: 19,
-            credit: 'Esri World Imagery'
+            credit: 'CartoDB Positron'
           });
         } catch (e) {
           console.warn('Initial imagery provider fallback:', e);
@@ -278,8 +280,8 @@ export const CesiumViewer: React.FC = () => {
         viewer.scene.globe.depthTestAgainstTerrain = false;
         viewer.scene.globe.enableLighting = false;
         viewer.scene.globe.showGroundAtmosphere = false;
-        viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString('#070b14');
-        viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#070b14');
+        viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString('#f8fafc');
+        viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#f8fafc');
         viewer.scene.fog.enabled = false;
         viewer.shadows = false;
 
@@ -336,18 +338,18 @@ export const CesiumViewer: React.FC = () => {
     let provider: any = null;
 
     try {
-      if (basemap === 'streets') {
+      if (basemap === 'light') {
+        provider = new Cesium.UrlTemplateImageryProvider({
+          url: 'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
+          subdomains: ['a', 'b', 'c', 'd'],
+          maximumLevel: 19,
+          credit: 'CartoDB Positron'
+        });
+      } else if (basemap === 'streets') {
         provider = new Cesium.UrlTemplateImageryProvider({
           url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
           maximumLevel: 19,
           credit: 'OpenStreetMap'
-        });
-      } else if (basemap === 'night') {
-        provider = new Cesium.UrlTemplateImageryProvider({
-          url: 'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
-          subdomains: ['a', 'b', 'c', 'd'],
-          maximumLevel: 19,
-          credit: 'CartoDB Dark'
         });
       } else if (basemap === 'terrain') {
         provider = new Cesium.UrlTemplateImageryProvider({
@@ -539,7 +541,7 @@ export const CesiumViewer: React.FC = () => {
           validationSourceRef.current = null;
         }
 
-        const bId = selectedBuildingId || selectedEntity?.building_id || 'B12';
+        const bId = selectedBuildingId || selectedEntity?.building_id || 'BLDG_ALPHA';
         const sId = selectedEntity?.entity_id || '';
         const geojson = await cadastreApi.getCesiumGeoJSON(explodeFactor, bId, sId);
         const ds = await Cesium.GeoJsonDataSource.load(geojson, { clampToGround: false });
@@ -591,6 +593,18 @@ export const CesiumViewer: React.FC = () => {
         viewer.dataSources.add(ds);
         dataSourceRef.current = ds;
         setLoading3D(false);
+
+        if (!initialFramedRef.current && ds.entities.values.length > 0) {
+          initialFramedRef.current = true;
+          viewer.flyTo(ds, {
+            offset: new Cesium.HeadingPitchRange(
+              Cesium.Math.toRadians(35),
+              Cesium.Math.toRadians(-35),
+              220.0
+            ),
+            duration: 1.0
+          });
+        }
       } catch (err) {
         console.error('Failed loading 3D Cadastre data', err);
         setLoading3D(false);
@@ -694,29 +708,29 @@ export const CesiumViewer: React.FC = () => {
     if (layers.lidarPointCloud) {
       if (!pointCloudPrimitivesRef.current) {
         const pointCollection = viewer.scene.primitives.add(new Cesium.PointPrimitiveCollection());
-        const center = [77.6248, 12.9356];
+        const center = [77.6250, 12.9355];
         const numPoints = 1400;
         
         for (let i = 0; i < numPoints; i++) {
-          const offsetLon = (Math.random() - 0.5) * 0.004;
-          const offsetLat = (Math.random() - 0.5) * 0.003;
+          const offsetLon = (Math.random() - 0.5) * 0.0016;
+          const offsetLat = (Math.random() - 0.5) * 0.0014;
           const lon = center[0] + offsetLon;
           const lat = center[1] + offsetLat;
           
           let z = 0;
           const r = Math.random();
-          if (r < 0.25) {
+          if (r < 0.35) {
             z = Math.random() * 0.5;
           } else if (r < 0.75) {
-            z = Math.random() * 20;
+            z = Math.random() * 18;
           } else {
-            z = 18 + Math.random() * 3;
+            z = 18 + Math.random() * 2;
           }
 
           let color = Cesium.Color.fromCssColorString('#38bdf8');
-          if (z < 2) color = Cesium.Color.fromCssColorString('#10b981');
-          else if (z < 8) color = Cesium.Color.fromCssColorString('#06b6d4');
-          else if (z < 15) color = Cesium.Color.fromCssColorString('#eab308');
+          if (z < 1) color = Cesium.Color.fromCssColorString('#10b981');
+          else if (z < 6) color = Cesium.Color.fromCssColorString('#06b6d4');
+          else if (z < 12) color = Cesium.Color.fromCssColorString('#eab308');
           else color = Cesium.Color.fromCssColorString('#f43f5e');
 
           pointCollection.add({
@@ -741,9 +755,9 @@ export const CesiumViewer: React.FC = () => {
     if (layers.demDsm) {
       if (!demPrimitivesRef.current) {
         const polylineCollection = viewer.scene.primitives.add(new Cesium.PolylineCollection());
-        const center = [77.62515, 12.9358];
-        const gridStep = 0.0004;
-        const gridCount = 10;
+        const center = [77.6250, 12.9355];
+        const gridStep = 0.00015;
+        const gridCount = 12;
         const startLon = center[0] - (gridCount * gridStep) / 2;
         const startLat = center[1] - (gridCount * gridStep) / 2;
 
@@ -993,56 +1007,56 @@ export const CesiumViewer: React.FC = () => {
   }, [selectedEntity?.entity_id, selectedEntity?.entity_type, flyToTarget, flyToEntity]);
 
   return (
-    <div className="relative w-full h-full bg-[#070b14] overflow-hidden">
+    <div className="relative w-full h-full bg-slate-100 overflow-hidden">
       <div ref={containerRef} className="w-full h-full" id="cesiumContainer" />
       
       {/* Loading Indicator */}
       {loading3D && (
-        <div className="absolute top-16 right-4 px-3.5 py-1.5 rounded-lg bg-slate-900/90 border border-white/10 text-cyan-400 text-xs font-mono flex items-center space-x-2 z-10 shadow-xl pointer-events-none animate-in fade-in duration-200">
-          <svg className="w-3.5 h-3.5 animate-spin text-cyan-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <div className="absolute top-16 right-4 px-3.5 py-1.5 rounded-lg bg-white/90 backdrop-blur-md border border-slate-200 text-blue-600 text-xs font-mono flex items-center space-x-2 z-10 shadow-lg pointer-events-none animate-in fade-in duration-200">
+          <svg className="w-3.5 h-3.5 animate-spin text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
           </svg>
-          <span>Syncing 3D Cadastre...</span>
+          <span className="text-slate-700 font-sans font-medium">Syncing 3D Cadastre...</span>
         </div>
       )}
 
       {/* Interactive Measurement HUD */}
       {activeTool === 'measure' && (
-        <div className="absolute top-20 left-4 p-4 rounded-xl bg-[#0d1321]/92 backdrop-blur-xl border border-cyan-500/30 shadow-2xl z-20 w-72 text-xs animate-in fade-in duration-200">
-          <div className="flex items-center justify-between pb-2 mb-3 border-b border-white/10">
+        <div className="absolute top-20 left-4 p-4 rounded-2xl bg-white/95 backdrop-blur-xl border border-slate-200 shadow-xl z-20 w-72 text-xs animate-in fade-in duration-200 text-slate-800">
+          <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-100">
             <div className="flex items-center space-x-2">
-              <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></span>
-              <span className="font-bold text-white uppercase tracking-wider">3D Measurement</span>
+              <span className="w-2 h-2 rounded-full bg-blue-600 animate-ping"></span>
+              <span className="font-bold text-slate-900 uppercase tracking-wider text-[11px]">3D Measurement</span>
             </div>
             <button
               onClick={() => setActiveTool('select')}
-              className="text-slate-400 hover:text-white text-[11px]"
+              className="text-slate-400 hover:text-slate-700 text-[11px]"
             >
               Close
             </button>
           </div>
 
-          <div className="text-[11px] text-slate-300 mb-3 leading-relaxed">
+          <div className="text-[11px] text-slate-500 mb-3 leading-relaxed">
             Click two points on terrain or building facades to measure 3D spatial distance and vertical elevation differential.
           </div>
 
-          <div className="space-y-2 bg-slate-900/60 p-2.5 rounded-lg border border-white/5 font-mono text-[11px]">
+          <div className="space-y-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200/80 font-mono text-[11px]">
             <div className="flex justify-between">
-              <span className="text-slate-400">Euclidean Distance:</span>
-              <span className="text-cyan-300 font-bold">
+              <span className="text-slate-500">Euclidean Distance:</span>
+              <span className="text-blue-600 font-bold">
                 {measureResult ? `${measureResult.distance.toFixed(2)} m` : '---'}
               </span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-400">Height Diff (ΔZ):</span>
-              <span className="text-emerald-300 font-bold">
+              <span className="text-slate-500">Height Diff (ΔZ):</span>
+              <span className="text-emerald-600 font-bold">
                 {measureResult ? `${measureResult.deltaZ.toFixed(2)} m` : '---'}
               </span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-400">Horizontal Dist:</span>
-              <span className="text-purple-300 font-bold">
+              <span className="text-slate-500">Horizontal Dist:</span>
+              <span className="text-indigo-600 font-bold">
                 {measureResult ? `${measureResult.horizDist.toFixed(2)} m` : '---'}
               </span>
             </div>
@@ -1051,11 +1065,11 @@ export const CesiumViewer: React.FC = () => {
           <div className="mt-3 flex items-center justify-between">
             <button
               onClick={clearMeasurements}
-              className="px-2.5 py-1 text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 rounded transition"
+              className="px-2.5 py-1 text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition font-medium"
             >
               Clear Marks
             </button>
-            <span className="text-[10px] text-slate-500">
+            <span className="text-[10px] text-slate-400">
               {measurePoints.length === 1 ? 'Pick 2nd point...' : 'Ready for pick'}
             </span>
           </div>
@@ -1064,28 +1078,28 @@ export const CesiumViewer: React.FC = () => {
 
       {/* Interactive Section Plane HUD */}
       {activeTool === 'section' && (
-        <div className="absolute top-20 left-4 p-4 rounded-xl bg-[#0d1321]/92 backdrop-blur-xl border border-blue-500/30 shadow-2xl z-20 w-72 text-xs animate-in fade-in duration-200">
-          <div className="flex items-center justify-between pb-2 mb-3 border-b border-white/10">
+        <div className="absolute top-20 left-4 p-4 rounded-2xl bg-white/95 backdrop-blur-xl border border-slate-200 shadow-xl z-20 w-72 text-xs animate-in fade-in duration-200 text-slate-800">
+          <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-100">
             <div className="flex items-center space-x-2">
-              <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse"></span>
-              <span className="font-bold text-white uppercase tracking-wider">Dynamic Section Plane</span>
+              <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse"></span>
+              <span className="font-bold text-slate-900 uppercase tracking-wider text-[11px]">Dynamic Section Plane</span>
             </div>
             <button
               onClick={() => setActiveTool('select')}
-              className="text-slate-400 hover:text-white text-[11px]"
+              className="text-slate-400 hover:text-slate-700 text-[11px]"
             >
               Close
             </button>
           </div>
 
-          <div className="text-[11px] text-slate-300 mb-3 leading-relaxed">
+          <div className="text-[11px] text-slate-500 mb-3 leading-relaxed">
             Slice vertically across building volumes to inspect interior cadastre storeys and unit envelopes.
           </div>
 
           <div className="space-y-2">
             <div className="flex justify-between items-center text-[11px]">
-              <span className="text-slate-400 font-medium">Cut Datum:</span>
-              <span className="font-mono text-cyan-400 font-bold">{sectionHeight} m</span>
+              <span className="text-slate-500 font-medium">Cut Datum:</span>
+              <span className="font-mono text-blue-600 font-bold">{sectionHeight} m</span>
             </div>
             <input
               type="range"
@@ -1094,9 +1108,9 @@ export const CesiumViewer: React.FC = () => {
               step="1"
               value={sectionHeight}
               onChange={(e) => setSectionHeight(Number(e.target.value))}
-              className="w-full h-1.5 bg-slate-900 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+              className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
             />
-            <div className="flex justify-between text-[9px] text-slate-500 font-mono">
+            <div className="flex justify-between text-[9px] text-slate-400 font-mono">
               <span>0m (Ground)</span>
               <span>30m (Mid-Rise)</span>
               <span>60m (Tower)</span>
