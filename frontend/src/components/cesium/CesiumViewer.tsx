@@ -83,6 +83,7 @@ export const CesiumViewer: React.FC = () => {
     setSelectedEntityId,
     selectedBuildingId,
     activeJurisdiction,
+    currentProject,
     flyToTarget,
     activeTool,
     setActiveTool,
@@ -95,7 +96,7 @@ export const CesiumViewer: React.FC = () => {
     try {
       const bId = selectedBuildingId || selectedEntity?.building_id || 'BLDG_ALPHA';
       const sId = selectedEntity?.entity_id || '';
-      const geojson = await cadastreApi.getCesiumGeoJSON(explodeFactor, bId, sId);
+      const geojson = await cadastreApi.getCesiumGeoJSON(explodeFactor, bId, sId, currentProject?.id);
       if (geojson && geojson.features) {
         setFeatures(geojson.features);
       }
@@ -104,7 +105,7 @@ export const CesiumViewer: React.FC = () => {
     } finally {
       setLoading3D(false);
     }
-  }, [explodeFactor, selectedBuildingId, selectedEntity?.entity_id]);
+  }, [explodeFactor, selectedBuildingId, selectedEntity?.entity_id, currentProject?.id]);
 
   useEffect(() => {
     fetchFeatures();
@@ -161,8 +162,8 @@ export const CesiumViewer: React.FC = () => {
         viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#f8fafc');
         viewer.scene.fog.enabled = false;
 
-        const initLon = activeJurisdiction?.center ? activeJurisdiction.center[0] : 77.62515;
-        const initLat = activeJurisdiction?.center ? activeJurisdiction.center[1] : 12.9358;
+        const initLon = activeJurisdiction?.center ? activeJurisdiction.center[0] : (currentProject?.center ? currentProject.center[0] : 77.62515);
+        const initLat = activeJurisdiction?.center ? activeJurisdiction.center[1] : (currentProject?.center ? currentProject.center[1] : 12.9358);
 
         viewer.camera.setView({
           destination: Cesium.Cartesian3.fromDegrees(initLon - 0.0016, initLat - 0.0022, 280.0),
@@ -191,21 +192,50 @@ export const CesiumViewer: React.FC = () => {
         viewerRef.current = null;
       }
     };
-  }, [activeJurisdiction]);
+  }, [activeJurisdiction, currentProject]);
 
-  // Projection Mathematics for Precision 3D Cadastral Isometric Space
-  // Origin: Koramangala Khasra 102/4A site center [77.6250, 12.9355]
-  const ORIGIN_LON = 77.6250;
-  const ORIGIN_LAT = 12.9355;
+  // Dynamic Projection Mathematics for Precision 3D Cadastral Space
+  const { originLon, originLat, scaleX, scaleY } = useMemo(() => {
+    if (features && features.length > 0) {
+      let minLon = Infinity, maxLon = -Infinity;
+      let minLat = Infinity, maxLat = -Infinity;
+      features.forEach(f => {
+        if (f.properties?.bbox) {
+          const b = f.properties.bbox;
+          if (b[0] < minLon) minLon = b[0];
+          if (b[1] < minLat) minLat = b[1];
+          if (b[3] > maxLon) maxLon = b[3];
+          if (b[4] > maxLat) maxLat = b[4];
+        }
+      });
+      if (minLon < Infinity && maxLon > -Infinity) {
+        const cLon = (minLon + maxLon) / 2.0;
+        const cLat = (minLat + maxLat) / 2.0;
+        const dLon = Math.max(0.0006, maxLon - minLon);
+        const dLat = Math.max(0.0006, maxLat - minLat);
+        const sX = 420 / dLon;
+        const sY = 420 / dLat;
+        const uniformScale = Math.min(sX, sY * 1.15);
+        return {
+          originLon: cLon,
+          originLat: cLat,
+          scaleX: uniformScale,
+          scaleY: uniformScale * 1.12
+        };
+      }
+    }
+    const cLon = activeJurisdiction?.center?.[0] || currentProject?.center?.[0] || 77.6250;
+    const cLat = activeJurisdiction?.center?.[1] || currentProject?.center?.[1] || 12.9355;
+    return { originLon: cLon, originLat: cLat, scaleX: 340000, scaleY: 380000 };
+  }, [features, activeJurisdiction, currentProject]);
+
   const CANVAS_CX = 480;
   const CANVAS_CY = 440;
-  const SCALE_X = 340000;
-  const SCALE_Y = 380000;
   const SCALE_Z = 12.5; // pixel per vertical meter
 
   const projectToScreen = useCallback((lon: number, lat: number, z_m: number = 0) => {
-    const dx = (lon - ORIGIN_LON) * SCALE_X;
-    const dy = (lat - ORIGIN_LAT) * SCALE_Y;
+    const dx = (lon - originLon) * scaleX;
+    const dy = (lat - originLat) * scaleY;
 
     // Isometric 30-degree projection matrix:
     // Screen X = CX + dx * cos(30) - dy * cos(30)
@@ -217,7 +247,7 @@ export const CesiumViewer: React.FC = () => {
     const screenY = CANVAS_CY - (dx * sin30) - (dy * sin30) - (z_m * SCALE_Z);
 
     return { x: screenX, y: screenY };
-  }, []);
+  }, [originLon, originLat, scaleX, scaleY]);
 
   // Format GeoJSON polygon to SVG Path string
   const polygonToSvgPath = useCallback((coords: any[], z_m: number = 0) => {
@@ -319,9 +349,9 @@ export const CesiumViewer: React.FC = () => {
     const clickX = e.clientX - rect.left;
     const clickY = e.clientY - rect.top;
 
-    // Approximate inverse mapping for local meters
-    const approxLon = ORIGIN_LON + (clickX - CANVAS_CX) / SCALE_X;
-    const approxLat = ORIGIN_LAT - (clickY - CANVAS_CY) / SCALE_Y;
+    // Dynamic inverse mapping for local meters
+    const approxLon = originLon + (clickX - CANVAS_CX) / scaleX;
+    const approxLat = originLat - (clickY - CANVAS_CY) / scaleY;
     const approxZ = 12.0;
 
     const newPt = { x: clickX, y: clickY, lon: approxLon, lat: approxLat, z: approxZ };
@@ -353,42 +383,42 @@ export const CesiumViewer: React.FC = () => {
     }
   };
 
-  // Surrounding Context Roads
+  // Dynamic Surrounding Context Roads relative to current project origin
   const ROAD_AXES = useMemo(() => [
     {
-      name: '100 Feet Intermediate Ring Road (North Boundary)',
-      coords: [[77.6238, 12.93635], [77.6262, 12.93635]],
+      name: 'North Access Highway / Arterial',
+      coords: [[originLon - 0.0012, originLat + 0.00085], [originLon + 0.0012, originLat + 0.00085]],
       width: 14
     },
     {
-      name: 'Hosur Main Road (West Cadastral Boundary)',
-      coords: [[77.62405, 12.9346], [77.62405, 12.9365]],
+      name: 'West Cadastral Boundary Corridor',
+      coords: [[originLon - 0.00095, originLat - 0.0009], [originLon - 0.00095, originLat + 0.0010]],
       width: 16
     },
     {
-      name: '80 Feet Road (South Corridor)',
-      coords: [[77.6238, 12.93475], [77.6262, 12.93475]],
+      name: 'South Boundary Ring Road',
+      coords: [[originLon - 0.0012, originLat - 0.00075], [originLon + 0.0012, originLat - 0.00075]],
       width: 12
     }
-  ], []);
+  ], [originLon, originLat]);
 
-  // Ground Control Points (GCPs) Survey Monuments
+  // Ground Control Points (GCPs) Survey Monuments relative to current site
   const GCP_MONUMENTS = useMemo(() => [
-    { id: 'GCP-01', name: 'NW Parcel Monument', lon: 77.6243, lat: 12.9361, elev: '920.12m' },
-    { id: 'GCP-02', name: 'NE Boundary Pillar', lon: 77.6257, lat: 12.9361, elev: '920.45m' },
-    { id: 'GCP-03', name: 'SE Marker Post', lon: 77.6257, lat: 12.9349, elev: '919.88m' },
-    { id: 'GCP-04', name: 'SW Plinth Monument', lon: 77.6243, lat: 12.9349, elev: '919.65m' },
-    { id: 'GCP-05', name: 'Tower Alpha Column SW', lon: 77.6245, lat: 12.9351, elev: '920.00m' },
-    { id: 'GCP-06', name: 'Tower Alpha Column NE', lon: 77.6251, lat: 12.9357, elev: '920.05m' }
-  ], []);
+    { id: 'GCP-01', name: 'NW Boundary Monument', lon: originLon - 0.0007, lat: originLat + 0.0006, elev: `${activeJurisdiction?.elevation_m || 920.0}m` },
+    { id: 'GCP-02', name: 'NE Boundary Pillar', lon: originLon + 0.0007, lat: originLat + 0.0006, elev: `${(activeJurisdiction?.elevation_m || 920.0) + 0.3}m` },
+    { id: 'GCP-03', name: 'SE Marker Post', lon: originLon + 0.0007, lat: originLat - 0.0006, elev: `${(activeJurisdiction?.elevation_m || 920.0) - 0.2}m` },
+    { id: 'GCP-04', name: 'SW Plinth Monument', lon: originLon - 0.0007, lat: originLat - 0.0006, elev: `${(activeJurisdiction?.elevation_m || 920.0) - 0.4}m` },
+    { id: 'GCP-05', name: 'Tower Alpha Station SW', lon: originLon - 0.0005, lat: originLat - 0.0004, elev: `${activeJurisdiction?.elevation_m || 920.0}m` },
+    { id: 'GCP-06', name: 'Tower Alpha Station NE', lon: originLon + 0.0001, lat: originLat + 0.0002, elev: `${(activeJurisdiction?.elevation_m || 920.0) + 0.1}m` }
+  ], [originLon, originLat, activeJurisdiction]);
 
   // Ground DEM Mesh Grid Lines
   const DEM_GRID_LINES = useMemo(() => {
     const lines = [];
-    const minLon = 77.6241;
-    const maxLon = 77.6259;
-    const minLat = 12.9347;
-    const maxLat = 12.9363;
+    const minLon = originLon - 0.0009;
+    const maxLon = originLon + 0.0009;
+    const minLat = originLat - 0.0008;
+    const maxLat = originLat + 0.0008;
     const step = 0.0003;
 
     for (let lon = minLon; lon <= maxLon; lon += step) {
@@ -398,25 +428,25 @@ export const CesiumViewer: React.FC = () => {
       lines.push([[minLon, lat], [maxLon, lat]]);
     }
     return lines;
-  }, []);
+  }, [originLon, originLat]);
 
   // Subterranean Utilities
   const SUBTERRANEAN_NETWORKS = useMemo(() => [
     {
       id: 'UTIL_DRAIN_01',
-      name: 'Koramangala Stormwater Drain Box Culvert (-2.5m)',
-      coords: [[77.6242, 12.9348], [77.6258, 12.9348]],
+      name: 'Municipal Stormwater Drain Box Culvert (-2.5m)',
+      coords: [[originLon - 0.0008, originLat - 0.0007], [originLon + 0.0008, originLat - 0.0007]],
       depth: -2.5,
       color: '#0ea5e9'
     },
     {
       id: 'UTIL_METRO_CORRIDOR',
-      name: 'Subterranean Metro Line Corridor (-14.0m to -18.0m)',
-      coords: [[77.6239, 12.9364], [77.6261, 12.9364]],
+      name: 'Subterranean Utility & Transport Tunnel (-14.0m)',
+      coords: [[originLon - 0.0011, originLat + 0.0009], [originLon + 0.0011, originLat + 0.0009]],
       depth: -14.0,
       color: '#ec4899'
     }
-  ], []);
+  ], [originLon, originLat]);
 
   // Filter features by layers
   const parcelFeatures = features.filter(f => f.properties.entity_type === 'PARCEL');
@@ -554,12 +584,17 @@ export const CesiumViewer: React.FC = () => {
             );
           })}
 
-          {/* 1. Real 2D Cadastral Parcel Boundary (Khasra 102/4A, 8,450 m²) */}
+          {/* 1. Real 2D Cadastral Parcel Boundary */}
           {layers.parcelBoundaries && parcelFeatures.map((parcel) => {
-            const isSelected = selectedEntity?.entity_id === parcel.id || selectedEntity?.entity_id === 'PARCEL_102_4A';
+            const isSelected = selectedEntity?.entity_id === parcel.id;
             const pathD = polygonToSvgPath(parcel.geometry.coordinates, 0.0);
             const plinthD = polygonToSvgPath(parcel.geometry.coordinates, 0.45);
-            const centerPt = projectToScreen(ORIGIN_LON, ORIGIN_LAT, 0.45);
+            const pCenter = parcel.properties.center || [originLon, originLat];
+            const centerPt = projectToScreen(pCenter[0], pCenter[1], 0.45);
+            const labelText = parcel.properties.survey_khasra_no 
+              ? `PARCEL ${parcel.properties.survey_khasra_no}` 
+              : parcel.id;
+            const areaVal = parcel.properties.registered_area_sqm || parcel.properties.area_sqm || 8450;
 
             return (
               <g 
@@ -586,9 +621,9 @@ export const CesiumViewer: React.FC = () => {
                 />
 
                 {/* Parcel Demarcation Banner */}
-                <g transform={`translate(${centerPt.x - 170}, ${centerPt.y + 110})`}>
+                <g transform={`translate(${centerPt.x - 110}, ${centerPt.y + 110})`}>
                   <rect 
-                    width="190" 
+                    width="230" 
                     height="28" 
                     rx="6" 
                     fill="white" 
@@ -599,7 +634,7 @@ export const CesiumViewer: React.FC = () => {
                   />
                   <circle cx="14" cy="14" r="4.5" fill="#10b981" />
                   <text x="26" y="18" fill="#065f46" fontSize="11" fontWeight="700" fontFamily="sans-serif">
-                    PARCEL 102/4A · 8,450 m²
+                    {labelText} · {Number(areaVal).toLocaleString()} m²
                   </text>
                 </g>
               </g>
@@ -686,7 +721,7 @@ export const CesiumViewer: React.FC = () => {
               const uId = selectedEntity.entity_id;
               const matched = unitFeatures.find(u => u.id === uId || u.properties.ulpin_3d === selectedEntity.ulpin_3d);
               if (matched) {
-                const center = matched.properties.center || [ORIGIN_LON, ORIGIN_LAT];
+                const center = matched.properties.center || [originLon, originLat];
                 const baseZ = matched.properties.local_base_m ?? 6.0;
                 const roofZ = matched.properties.local_roof_m ?? 9.0;
                 const pos = projectToScreen(center[0], center[1], roofZ);
@@ -715,10 +750,10 @@ export const CesiumViewer: React.FC = () => {
           {/* Dynamic Section Clipping Plane (when activeTool === 'section') */}
           {activeTool === 'section' && (
             (() => {
-              const sw = projectToScreen(77.6244, 12.9350, sectionPlaneZ);
-              const se = projectToScreen(77.6258, 12.9350, sectionPlaneZ);
-              const ne = projectToScreen(77.6258, 12.9358, sectionPlaneZ);
-              const nw = projectToScreen(77.6244, 12.9358, sectionPlaneZ);
+              const sw = projectToScreen(originLon - 0.0006, originLat - 0.0005, sectionPlaneZ);
+              const se = projectToScreen(originLon + 0.0008, originLat - 0.0005, sectionPlaneZ);
+              const ne = projectToScreen(originLon + 0.0008, originLat + 0.0003, sectionPlaneZ);
+              const nw = projectToScreen(originLon - 0.0006, originLat + 0.0003, sectionPlaneZ);
               const pathStr = `M ${sw.x} ${sw.y} L ${se.x} ${se.y} L ${ne.x} ${ne.y} L ${nw.x} ${nw.y} Z`;
 
               return (

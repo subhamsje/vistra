@@ -5,15 +5,19 @@ import {
   Command, 
   Globe2, 
   Bell, 
-  ChevronDown 
+  ChevronDown,
+  LayoutGrid,
+  Layers,
+  ArrowUpRight
 } from 'lucide-react';
 import { useCadastre } from '../../store/CadastreContext';
 
 export const Topbar: React.FC = () => {
   const { 
-    jurisdictions, 
-    activeJurisdiction, 
-    setActiveJurisdiction, 
+    projects,
+    currentProject,
+    setActiveProjectById,
+    navigateTo,
     user, 
     reviewQueueCount,
     pipelineStatus,
@@ -24,37 +28,63 @@ export const Topbar: React.FC = () => {
 
   return (
     <header className="h-14 px-4 bg-white/80 backdrop-blur-xl border-b border-slate-200/80 flex items-center justify-between z-30 shrink-0 select-none text-slate-800 shadow-xs">
-      {/* Jurisdiction Selector */}
-      <div className="relative">
-        <button 
-          onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-          className="flex items-center space-x-2 bg-white hover:bg-slate-50 text-xs text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 transition shadow-xs"
+      {/* Project / Jurisdiction Selector */}
+      <div className="flex items-center space-x-2">
+        <button
+          onClick={() => navigateTo('/projects')}
+          className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-slate-100 rounded-lg transition"
+          title="All Projects"
         >
-          <MapPin className="w-3.5 h-3.5 text-blue-600" />
-          <span className="font-semibold">{activeJurisdiction?.name || 'Loading Jurisdiction...'}</span>
-          <ChevronDown className="w-3 h-3 text-slate-400" />
+          <LayoutGrid className="w-4 h-4" />
         </button>
 
-        {isDropdownOpen && (
-          <div className="absolute top-full mt-1.5 left-0 w-64 bg-white/95 backdrop-blur-xl border border-slate-200 rounded-xl shadow-xl p-1.5 z-50 text-xs">
-            <div className="text-[10px] text-slate-400 px-2 py-1 uppercase tracking-wider font-semibold">Switch Cadastral Jurisdiction</div>
-            {jurisdictions.map(j => (
-              <button
-                key={j.id}
-                onClick={() => {
-                  setActiveJurisdiction(j);
-                  setIsDropdownOpen(false);
-                }}
-                className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between transition ${
-                  j.id === activeJurisdiction?.id ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                <span>{j.name}</span>
-                <span className="text-[10px] text-slate-400">{j.crs.split(' ')[0]}</span>
-              </button>
-            ))}
-          </div>
-        )}
+        <div className="relative">
+          <button 
+            onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+            className="flex items-center space-x-2 bg-white hover:bg-slate-50 text-xs text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 transition shadow-xs"
+          >
+            <MapPin className="w-3.5 h-3.5 text-blue-600" />
+            <span className="font-semibold max-w-[200px] truncate">{currentProject?.name || 'Select Project...'}</span>
+            <ChevronDown className="w-3 h-3 text-slate-400" />
+          </button>
+
+          {isDropdownOpen && (
+            <div className="absolute top-full mt-1.5 left-0 w-80 bg-white/95 backdrop-blur-xl border border-slate-200 rounded-xl shadow-xl p-2 z-50 text-xs animate-in fade-in duration-150">
+              <div className="text-[10px] text-slate-400 px-2.5 py-1 uppercase tracking-wider font-semibold flex items-center justify-between">
+                <span>Switch Cadastral Site</span>
+                <button 
+                  onClick={() => { setIsDropdownOpen(false); navigateTo('/projects'); }}
+                  className="text-blue-600 hover:underline flex items-center space-x-0.5 normal-case font-medium"
+                >
+                  <span>All Sites</span>
+                  <ArrowUpRight className="w-3 h-3" />
+                </button>
+              </div>
+              <div className="space-y-1 mt-1">
+                {projects.map(p => (
+                  <button
+                    key={p.id}
+                    onClick={() => {
+                      setActiveProjectById(p.id);
+                      setIsDropdownOpen(false);
+                    }}
+                    className={`w-full text-left px-2.5 py-2 rounded-lg flex items-center justify-between transition ${
+                      p.id === currentProject?.id ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="truncate mr-2">
+                      <div className="truncate font-semibold">{p.name}</div>
+                      <div className="text-[10px] text-slate-400 truncate">{p.jurisdiction} · {p.survey_khasra_no}</div>
+                    </div>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 font-mono text-slate-500 shrink-0">
+                      {p.stats.units} units
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Global Property Search Bar */}
@@ -85,7 +115,7 @@ export const Topbar: React.FC = () => {
         {/* CRS Badge */}
         <div className="flex items-center space-x-1.5 bg-slate-100/80 px-2.5 py-1 rounded-lg border border-slate-200/80 text-slate-600 shadow-xs">
           <Globe2 className="w-3.5 h-3.5 text-blue-500" />
-          <span className="font-mono text-[11px] font-medium">{activeJurisdiction?.crs || 'EPSG:4326 WGS 84'}</span>
+          <span className="font-mono text-[11px] font-medium">{currentProject?.crs || 'EPSG:4326 WGS 84'}</span>
         </div>
 
         {/* Notifications Bell (Live review queue count) */}
@@ -112,3 +142,4 @@ export const Topbar: React.FC = () => {
     </header>
   );
 };
+

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { 
   EntityDetails, 
   Jurisdiction, 
@@ -12,13 +12,18 @@ import {
   CameraViewMode,
   ValidationIssue,
   ExplodedFloor,
-  DataSourceItem
+  DataSourceItem,
+  ProjectRecord
 } from '../types/cadastre';
 import { cadastreApi } from '../services/api';
 
 interface CadastreContextType {
   activeView: NavView;
   setActiveView: (view: NavView) => void;
+  currentProject: ProjectRecord | null;
+  projects: ProjectRecord[];
+  setActiveProjectById: (projectId: string) => Promise<void>;
+  navigateTo: (path: string, params?: Record<string, string>) => void;
   selectedEntity: EntityDetails | null;
   setSelectedEntityId: (id: string | null) => Promise<void>;
   selectedBuildingId: string;
@@ -90,9 +95,19 @@ const defaultLayers: LayerVisibilityState = {
 const CadastreContext = createContext<CadastreContextType | undefined>(undefined);
 
 export const CadastreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [activeView, setActiveView] = useState<NavView>('3d_cadastre');
+  // Navigation State from URL pathname
+  const [activeView, setActiveView] = useState<NavView>(() => {
+    const path = window.location.pathname;
+    if (path === '/' || path === '') return 'landing';
+    if (path.startsWith('/projects')) return 'projects';
+    return '3d_cadastre';
+  });
+
+  const [projects, setProjects] = useState<ProjectRecord[]>([]);
+  const [currentProject, setCurrentProject] = useState<ProjectRecord | null>(null);
+
   const [selectedEntity, setSelectedEntity] = useState<EntityDetails | null>(null);
-  const [selectedBuildingId, setSelectedBuildingId] = useState<string>('BLDG_ALPHA');
+  const [selectedBuildingId, setSelectedBuildingId] = useState<string>('');
   const [isPropertyPanelOpen, setIsPropertyPanelOpen] = useState<boolean>(false);
   const [isPropertyPanelMinimized, setIsPropertyPanelMinimized] = useState<boolean>(false);
   const [isPipelineDockMinimized, setIsPipelineDockMinimized] = useState<boolean>(false);
@@ -120,32 +135,111 @@ export const CadastreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [explodedBuildingId, setExplodedBuildingId] = useState<string | null>(null);
   const [explodedFloors, setExplodedFloors] = useState<Map<number, ExplodedFloor>>(new Map());
 
-  const loadInitialData = async () => {
+  // URL Navigation helper
+  const navigateTo = useCallback((path: string, params?: Record<string, string>) => {
+    let url = path;
+    if (params) {
+      const searchParams = new URLSearchParams(params);
+      url += `?${searchParams.toString()}`;
+    }
+    window.history.pushState({}, '', url);
+
+    if (path === '/' || path === '') {
+      setActiveView('landing');
+    } else if (path.startsWith('/projects')) {
+      setActiveView('projects');
+    } else {
+      setActiveView('3d_cadastre');
+    }
+  }, []);
+
+  // Listen to browser Back / Forward buttons
+  useEffect(() => {
+    const handlePopState = () => {
+      const path = window.location.pathname;
+      if (path === '/' || path === '') {
+        setActiveView('landing');
+      } else if (path.startsWith('/projects')) {
+        setActiveView('projects');
+      } else {
+        setActiveView('3d_cadastre');
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  // Load project data
+  const loadProjectData = async (projectId?: string) => {
     try {
-      const [jList, uProfile, pStatus, rQueue, initEntity] = await Promise.all([
-        cadastreApi.getJurisdictions(),
+      const pList = await cadastreApi.getProjects();
+      setProjects(pList);
+
+      const searchParams = new URLSearchParams(window.location.search);
+      const targetProjId = projectId || searchParams.get('project') || (pList.length > 0 ? pList[0].id : 'blr_koramangala');
+      
+      const activeProj = pList.find(p => p.id === targetProjId) || pList[0];
+      if (activeProj) {
+        setCurrentProject(activeProj);
+      }
+
+      const [jList, uProfile, pStatus, rQueue, regData, valRep, dSources] = await Promise.all([
+        cadastreApi.getJurisdictions(targetProjId),
         cadastreApi.getUserProfile(),
-        cadastreApi.getPipelineStatus(),
-        cadastreApi.getReviewQueue(),
-        cadastreApi.getEntityDetails('BLDG_ALPHA_F3_U302')
+        cadastreApi.getPipelineStatus(targetProjId),
+        cadastreApi.getReviewQueue(targetProjId),
+        cadastreApi.getRegistryRecords('', 'ALL', 1, targetProjId),
+        cadastreApi.getValidationReport(targetProjId),
+        cadastreApi.getDataSources(targetProjId)
       ]);
+
       setJurisdictions(jList);
-      if (jList.length > 0) setActiveJurisdiction(jList[0]);
+      const matchedJ = jList.find(j => j.id === targetProjId) || jList[0];
+      if (matchedJ) setActiveJurisdiction(matchedJ);
       setUser(uProfile);
       setPipelineStatus(pStatus);
       setReviewQueueCount(rQueue.length);
-      setSelectedEntity(initEntity);
-      if (initEntity && initEntity.building_id) {
-        setSelectedBuildingId(initEntity.building_id);
-        setIsPropertyPanelOpen(true);
+      if (valRep?.issues) setValidationIssues(valRep.issues);
+      if (dSources) setEvidenceSources(dSources);
+
+      // Select initial entity from real records
+      if (regData.records && regData.records.length > 0) {
+        const firstUnit = regData.records.find(r => r.entity_type === 'UNIT') || regData.records[0];
+        const details = await cadastreApi.getEntityDetails(firstUnit.id, targetProjId);
+        setSelectedEntity(details);
+        if (details?.building_id) {
+          setSelectedBuildingId(details.building_id);
+          setIsPropertyPanelOpen(true);
+        }
       }
     } catch (err) {
-      console.error('Failed loading initial cadastre state', err);
+      console.error('Failed loading cadastre state', err);
+    }
+  };
+
+  // Switch active project
+  const setActiveProjectById = async (projectId: string) => {
+    try {
+      // Update browser URL query parameter without full reload
+      const url = new URL(window.location.href);
+      url.searchParams.set('project', projectId);
+      window.history.pushState({}, '', url.toString());
+
+      await cadastreApi.activateProject(projectId);
+      await loadProjectData(projectId);
+
+      // Trigger fly to new project center
+      const proj = projects.find(p => p.id === projectId);
+      if (proj && proj.center) {
+        triggerFlyTo(proj.center);
+      }
+    } catch (err) {
+      console.error(`Failed to activate project ${projectId}:`, err);
     }
   };
 
   useEffect(() => {
-    loadInitialData();
+    loadProjectData();
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -164,10 +258,10 @@ export const CadastreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return;
     }
     try {
-      const details = await cadastreApi.getEntityDetails(id);
+      const details = await cadastreApi.getEntityDetails(id, currentProject?.id);
       setSelectedEntity(details);
       setIsPropertyPanelOpen(true);
-      if (details.building_id) {
+      if (details?.building_id) {
         setSelectedBuildingId(details.building_id);
       }
     } catch (err) {
@@ -188,6 +282,10 @@ export const CadastreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       value={{
         activeView,
         setActiveView,
+        currentProject,
+        projects,
+        setActiveProjectById,
+        navigateTo,
         selectedEntity,
         setSelectedEntityId,
         selectedBuildingId,
@@ -225,7 +323,7 @@ export const CadastreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         flyToTarget,
         setFlyToTarget,
         triggerFlyTo,
-        refreshData: loadInitialData,
+        refreshData: () => loadProjectData(currentProject?.id),
         validationIssues,
         setValidationIssues,
         activeValidationIssue,
@@ -254,3 +352,4 @@ export const useCadastre = () => {
   }
   return context;
 };
+

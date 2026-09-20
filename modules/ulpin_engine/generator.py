@@ -20,9 +20,11 @@ class ULPINEngine:
     def generate_parcel_ulpin(self, parcel: Dict[str, Any]) -> str:
         """Generates standard root 2D ULPIN based on centroid geocoding or survey ID"""
         props = parcel.get("properties", {})
-        khasra = str(props.get("survey_khasra_no", parcel.get("id", "0"))).replace("/", "-")
-        # Format: IN-KA-BLR-P102-4
-        return f"{self.country}-{self.state}-{self.district}-P{khasra}"
+        khasra = str(props.get("survey_khasra_no", parcel.get("id", "0"))).replace("/", "-").replace(" ", "-")
+        st = props.get("state") or self.state
+        dst = props.get("district") or self.district
+        # Format: IN-KA-BLR-P102-4A
+        return f"{self.country}-{st}-{dst}-P{khasra}"
 
     def generate_building_ulpin(self, building: Dict[str, Any], parent_parcel_ulpin: str) -> str:
         b_id = str(building.get("id", "1")).replace("BLDG_", "").replace("B_", "")

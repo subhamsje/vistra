@@ -503,37 +503,61 @@ def query_registry(
         "records": paginated
     }
 
+def compute_polygon_metrics(geometry: Any, z_min: float, z_max: float) -> tuple[float, float]:
+    try:
+        if not geometry:
+            return 100.0, round(100.0 * max(0.2, z_max - z_min), 1)
+        poly = shape(geometry)
+        if poly.is_empty or poly.area <= 0:
+            return 100.0, round(100.0 * max(0.2, z_max - z_min), 1)
+        
+        c = poly.centroid
+        is_deg = abs(c.x) <= 180 and abs(c.y) <= 90
+        if is_deg:
+            lat_rad = math.radians(c.y)
+            m_x = 111412.0 * math.cos(lat_rad)
+            m_y = 111139.0
+            area_sqm = round(poly.area * m_x * m_y, 1)
+        else:
+            area_sqm = round(poly.area, 1)
+
+        h = max(0.2, z_max - z_min)
+        vol = round(area_sqm * h, 1)
+        return max(10.0, area_sqm), vol
+    except Exception:
+        h = max(0.2, z_max - z_min)
+        return 100.0, round(100.0 * h, 1)
+
 @app.get("/api/entity/{identifier}")
 def get_entity_details(identifier: str, project: Optional[str] = Query(None)):
     """Returns rich, contextual intelligence for any Cadastral Entity."""
     state = get_project_state(project)
     ds = state["_cached_dataset"]
     site = state.get("site_info", {})
-    base_ground = site.get("base_elevation_m", 920.0)
+    base_ground = float(site.get("base_elevation_m", 920.0))
     
     # 1. Search in units
     target_unit = next((u for u in ds.get("units", []) if u["id"] == identifier or u.get("ulpin_3d") == identifier), None)
     if target_unit:
         fl_id = target_unit.get("floor_id")
         fl = next((f for f in ds.get("floors", []) if f["id"] == fl_id), None)
-        b_id = fl.get("building_id") if fl else "BLDG_1"
+        b_id = fl.get("building_id") if fl else "BLDG_ALPHA"
         b = next((bld for bld in ds.get("buildings", []) if bld["id"] == b_id), None)
         p_id = b.get("properties", {}).get("parent_parcel_id", "PARCEL_1") if b else "PARCEL_1"
         
-        z_min = target_unit.get("z_bounds", [base_ground, base_ground + 3.0])[0]
-        z_max = target_unit.get("z_bounds", [base_ground, base_ground + 3.0])[1]
-        h = z_max - z_min
+        z_min = float(target_unit.get("z_bounds", [base_ground, base_ground + 3.0])[0])
+        z_max = float(target_unit.get("z_bounds", [base_ground, base_ground + 3.0])[1])
+        h = max(0.5, z_max - z_min)
         fl_num = fl.get("floor_level", 1) if fl else 1
 
-        area_sqm = 112.5
-        volume_m3 = round(area_sqm * h, 1)
+        area_sqm, volume_m3 = compute_polygon_metrics(target_unit.get("geometry_2d"), z_min, z_max)
 
         return {
             "entity_id": target_unit["id"],
             "ulpin_3d": target_unit.get("ulpin_3d", f"IN-3D-{p_id}-{b_id}-F{fl_num}-{target_unit.get('unit_number')}"),
             "entity_type": "UNIT",
             "type_label": "3D Private Property Volume / Apartment",
-            "category": "Residential" if "ALPHA" in b_id or "102" in p_id else "Commercial",
+            "category": "Subterranean" if (fl and fl.get("is_basement")) else ("Commercial" if fl_num <= 1 else "Residential"),
             "validation_status": "Validated",
             "parcel_id": p_id,
             "building_id": b_id,
@@ -544,8 +568,8 @@ def get_entity_details(identifier: str, project: Optional[str] = Query(None)):
             "vertical_extent": f"+{round(z_min - base_ground, 1)} m -> +{round(z_max - base_ground, 1)} m",
             "elevation_abs": f"{round(z_min, 1)} m -> {round(z_max, 1)} m",
             "volume_m3": volume_m3,
-            "geometry_confidence": 99,
-            "data_confidence": 98,
+            "geometry_confidence": 99.0,
+            "data_confidence": 98.5,
             "validation_checklist": [
                 {"name": "Valid Geometry & Closed Polyhedron", "status": "PASS"},
                 {"name": "Parcel Boundary Containment", "status": "PASS"},
@@ -562,16 +586,63 @@ def get_entity_details(identifier: str, project: Optional[str] = Query(None)):
             "thumbnail_url": "https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?auto=format&fit=crop&w=600&q=80"
         }
 
-    # 2. Search in buildings
-    target_bldg = next((bld for bld in ds.get("buildings", []) if bld["id"] == identifier or bld.get("ulpin_3d") == identifier), None)
+    # 2. Search in floors
+    target_fl = next((f for f in ds.get("floors", []) if f["id"] == identifier or f.get("ulpin_3d") == identifier), None)
+    if target_fl:
+        b_id = target_fl.get("building_id", "BLDG_ALPHA")
+        b = next((bld for bld in ds.get("buildings", []) if bld["id"] == b_id), None)
+        p_id = b.get("properties", {}).get("parent_parcel_id", "PARCEL_1") if b else "PARCEL_1"
+        fl_lvl = target_fl.get("floor_level", 1)
+        z_min = float(target_fl.get("base_elevation_m", base_ground))
+        z_max = float(target_fl.get("roof_elevation_m", base_ground + 3.0))
+        fl_geom = target_fl.get("footprint") or target_fl.get("geometry") or (b.get("geometry") if b else None)
+        area_sqm, volume_m3 = compute_polygon_metrics(fl_geom, z_min, z_max)
+
+        return {
+            "entity_id": target_fl["id"],
+            "ulpin_3d": target_fl.get("ulpin_3d", f"IN-3D-{p_id}-{b_id}-F{fl_lvl}"),
+            "entity_type": "FLOOR",
+            "type_label": "Cadastral Storey Slab / Floor",
+            "category": "Subterranean Parking" if target_fl.get("is_basement") else ("Ground Commercial" if fl_lvl <= 1 else "Residential Floor"),
+            "validation_status": "Validated",
+            "parcel_id": p_id,
+            "building_id": b_id,
+            "floor_level": fl_lvl,
+            "unit_number": None,
+            "area_sqft": round(area_sqm * 10.7639),
+            "area_sqm": area_sqm,
+            "vertical_extent": f"+{round(z_min - base_ground, 1)} m -> +{round(z_max - base_ground, 1)} m",
+            "elevation_abs": f"{round(z_min, 1)} m -> {round(z_max, 1)} m",
+            "volume_m3": volume_m3,
+            "geometry_confidence": 99.5,
+            "data_confidence": 99.0,
+            "validation_checklist": [
+                {"name": "Valid Floor Slab Planar Geometry", "status": "PASS"},
+                {"name": "Contained in Building Envelope", "status": "PASS"},
+                {"name": "Inter-Storey Non-Penetration", "status": "PASS"},
+                {"name": "Unique Storey ULPIN Registered", "status": "PASS"},
+                {"name": "LiDAR Slab Height Conformance", "status": "PASS"},
+                {"name": "Horizontal Datum Orthogonality", "status": "PASS"},
+                {"name": "Unit Partition Boundary Integrity", "status": "PASS"}
+            ],
+            "data_sources": ["LiDAR LAZ", "Architectural CAD / PDF", "DEM Elevation", "GNSS Benchmarks"],
+            "last_updated": time.strftime("%d %b %Y"),
+            "version": "v3.0.0",
+            "audit_hash": target_fl.get("audit_hash"),
+            "thumbnail_url": "https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?auto=format&fit=crop&w=600&q=80"
+        }
+
+    # 3. Search in buildings
+    raw_b_id = identifier.replace("_FOUNDATION", "")
+    target_bldg = next((bld for bld in ds.get("buildings", []) if bld["id"] == identifier or bld["id"] == raw_b_id or bld.get("ulpin_3d") == identifier), None)
     if target_bldg:
         props = target_bldg.get("properties", {})
         b_id = target_bldg["id"]
         p_id = props.get("parent_parcel_id", "PARCEL_1")
-        z_min = props.get("base_elevation_m", base_ground)
-        z_max = props.get("roof_elevation_m", base_ground + 18.0)
-        h = z_max - z_min
-        area_sqm = 2700.0
+        z_min = float(props.get("base_elevation_m", base_ground))
+        z_max = float(props.get("roof_elevation_m", base_ground + 18.0))
+        h = max(0.5, z_max - z_min)
+        area_sqm, volume_m3 = compute_polygon_metrics(target_bldg.get("geometry"), z_min, z_max)
 
         return {
             "entity_id": target_bldg["id"],
@@ -588,9 +659,9 @@ def get_entity_details(identifier: str, project: Optional[str] = Query(None)):
             "area_sqm": area_sqm,
             "vertical_extent": f"+0.0 m -> +{round(h, 1)} m",
             "elevation_abs": f"{round(z_min, 1)} m -> {round(z_max, 1)} m",
-            "volume_m3": round(area_sqm * h, 1),
-            "geometry_confidence": 99,
-            "data_confidence": 98,
+            "volume_m3": volume_m3,
+            "geometry_confidence": 99.0,
+            "data_confidence": 98.5,
             "validation_checklist": [
                 {"name": "Valid Footprint Geometry", "status": "PASS"},
                 {"name": "Contained in Parcel Boundary", "status": "PASS"},
@@ -607,15 +678,18 @@ def get_entity_details(identifier: str, project: Optional[str] = Query(None)):
             "thumbnail_url": "https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?auto=format&fit=crop&w=600&q=80"
         }
 
-    # 3. Search in parcels
+    # 4. Search in parcels
     target_parcel = next((p for p in ds.get("parcels", []) if p.get("id") == identifier or p.get("ulpin_3d") == identifier), None)
     if target_parcel:
         props = target_parcel.get("properties", {})
         p_id = target_parcel.get("id", "PARCEL_1")
-        z_min = props.get("base_elevation_m", base_ground)
-        z_max = props.get("max_elevation_m", base_ground + 45.0)
-        h = z_max - z_min
-        area_sqm = props.get("registered_area_sqm", 8450.0)
+        z_min = float(props.get("base_elevation_m", base_ground))
+        z_max = float(props.get("max_elevation_m", base_ground + 45.0))
+        h = max(0.5, z_max - z_min)
+        area_sqm, volume_m3 = compute_polygon_metrics(target_parcel.get("geometry"), z_min, z_max)
+        if props.get("registered_area_sqm"):
+            area_sqm = float(props.get("registered_area_sqm"))
+            volume_m3 = round(area_sqm * h, 1)
 
         return {
             "entity_id": p_id,
@@ -632,7 +706,7 @@ def get_entity_details(identifier: str, project: Optional[str] = Query(None)):
             "area_sqm": area_sqm,
             "vertical_extent": f"+0.0 m -> +{round(h, 1)} m",
             "elevation_abs": f"{round(z_min, 1)} m -> {round(z_max, 1)} m",
-            "volume_m3": round(area_sqm * h, 1),
+            "volume_m3": volume_m3,
             "geometry_confidence": 99.9,
             "data_confidence": 99.5,
             "validation_checklist": [

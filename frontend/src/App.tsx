@@ -11,6 +11,8 @@ import { PropertyDetailsPanel } from './components/panels/PropertyDetailsPanel';
 import { EvidenceFusionDrawer } from './components/panels/EvidenceFusionDrawer';
 import { BottomPipelineDock } from './components/panels/BottomPipelineDock';
 
+import { LandingPageView } from './components/views/LandingPageView';
+import { ProjectSelectView } from './components/views/ProjectSelectView';
 import { RegistryView } from './components/views/RegistryView';
 import { ValidationView } from './components/views/ValidationView';
 import { ReviewQueueView } from './components/views/ReviewQueueView';
@@ -18,8 +20,39 @@ import { DataSourcesView } from './components/views/DataSourcesView';
 import { AuditTrailView } from './components/views/AuditTrailView';
 import { AnalysisView } from './components/views/AnalysisView';
 
-const MainLayout: React.FC = () => {
+const WorkspaceStage: React.FC = () => {
   const { activeView, isPropertyPanelOpen, selectedEntity } = useCadastre();
+
+  if (activeView === 'ulpin_registry') return <RegistryView />;
+  if (activeView === 'validation') return <ValidationView />;
+  if (activeView === 'review_queue') return <ReviewQueueView />;
+  if (activeView === 'data_sources') return <DataSourcesView />;
+  if (activeView === 'audit_trail') return <AuditTrailView />;
+  if (activeView === 'analysis') return <AnalysisView />;
+
+  return (
+    <div className="flex flex-1 overflow-hidden relative">
+      <div className="flex-1 relative overflow-hidden">
+        <CesiumViewer />
+        <MapToolbar />
+        <LayerPanel />
+        <BasemapSwitcher />
+      </div>
+      {isPropertyPanelOpen && selectedEntity && <PropertyDetailsPanel />}
+    </div>
+  );
+};
+
+const MainLayout: React.FC = () => {
+  const { activeView } = useCadastre();
+
+  if (activeView === 'landing') {
+    return <LandingPageView />;
+  }
+
+  if (activeView === 'projects') {
+    return <ProjectSelectView />;
+  }
 
   return (
     <div className="flex flex-col w-screen h-screen overflow-hidden bg-slate-50 text-slate-800 select-none">
@@ -33,43 +66,7 @@ const MainLayout: React.FC = () => {
 
         {/* Dynamic Center Stage */}
         <main className="flex-1 flex flex-col relative overflow-hidden">
-          {activeView === '3d_cadastre' ? (
-            <div className="flex flex-1 overflow-hidden relative">
-              {/* 3D Geospatial Map Canvas */}
-              <div className="flex-1 relative overflow-hidden">
-                <CesiumViewer />
-                <MapToolbar />
-                <LayerPanel />
-                <BasemapSwitcher />
-              </div>
-
-              {/* Right Intelligence Property Inspector */}
-              {isPropertyPanelOpen && selectedEntity && <PropertyDetailsPanel />}
-            </div>
-          ) : activeView === 'ulpin_registry' ? (
-            <RegistryView />
-          ) : activeView === 'validation' ? (
-            <ValidationView />
-          ) : activeView === 'review_queue' ? (
-            <ReviewQueueView />
-          ) : activeView === 'data_sources' ? (
-            <DataSourcesView />
-          ) : activeView === 'audit_trail' ? (
-            <AuditTrailView />
-          ) : activeView === 'analysis' ? (
-            <AnalysisView />
-          ) : (
-            // Default Fallback to 3D workspace
-            <div className="flex flex-1 overflow-hidden relative">
-              <div className="flex-1 relative overflow-hidden">
-                <CesiumViewer />
-                <MapToolbar />
-                <LayerPanel />
-                <BasemapSwitcher />
-              </div>
-              {isPropertyPanelOpen && selectedEntity && <PropertyDetailsPanel />}
-            </div>
-          )}
+          <WorkspaceStage />
 
           {/* Bottom Processing Pipeline Dock */}
           <BottomPipelineDock />
@@ -92,3 +89,4 @@ export const App: React.FC = () => {
     </CadastreProvider>
   );
 };
+

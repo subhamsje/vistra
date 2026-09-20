@@ -18,6 +18,7 @@ GIS + LiDAR + Floor Plan + DEM/DSM + Drone/GNSS
 import os
 import json
 from typing import Dict, Any, List, Optional
+from shapely.geometry import shape, Polygon
 
 from modules.data_ingestion.engine import IngestionEngine
 from modules.gis_processing.processor import GISProcessor
@@ -105,8 +106,57 @@ class VistraPipeline:
         # -------------------------------------------------------------
         # Stage 3: Building Extraction & Footprint Association
         # -------------------------------------------------------------
-        # Define site buildings consistent with floorplans & LiDAR
-        parent_parcel_id = parcels[0]["id"] if parcels else "PARCEL_102_4A"
+        # Define site buildings consistent with floorplans & LiDAR situated in parcel
+        parent_parcel = parcels[0] if parcels else None
+        parent_parcel_id = parent_parcel["id"] if parent_parcel else "PARCEL_102_4A"
+
+        if parent_parcel and "geometry" in parent_parcel:
+            poly = shape(parent_parcel["geometry"])
+            min_x, min_y, max_x, max_y = poly.bounds
+            dx = max_x - min_x
+            dy = max_y - min_y
+
+            # Tower Alpha footprint (occupies ~35% of parcel footprint, western half)
+            a_minx = min_x + 0.14 * dx
+            a_maxx = min_x + 0.57 * dx
+            a_miny = min_y + 0.16 * dy
+            a_maxy = min_y + 0.67 * dy
+            alpha_coords = [[
+                [round(a_minx, 6), round(a_miny, 6)],
+                [round(a_maxx, 6), round(a_miny, 6)],
+                [round(a_maxx, 6), round(a_maxy, 6)],
+                [round(a_minx, 6), round(a_maxy, 6)],
+                [round(a_minx, 6), round(a_miny, 6)]
+            ]]
+
+            # Tower Beta footprint (occupies ~20% of parcel footprint, eastern sector)
+            b_minx = min_x + 0.67 * dx
+            b_maxx = min_x + 0.92 * dx
+            b_miny = min_y + 0.20 * dy
+            b_maxy = min_y + 0.62 * dy
+            beta_coords = [[
+                [round(b_minx, 6), round(b_miny, 6)],
+                [round(b_maxx, 6), round(b_miny, 6)],
+                [round(b_maxx, 6), round(b_maxy, 6)],
+                [round(b_minx, 6), round(b_maxy, 6)],
+                [round(b_minx, 6), round(b_miny, 6)]
+            ]]
+        else:
+            alpha_coords = [[
+                [77.62450, 12.93510],
+                [77.62510, 12.93510],
+                [77.62510, 12.93570],
+                [77.62450, 12.93570],
+                [77.62450, 12.93510]
+            ]]
+            beta_coords = [[
+                [77.62525, 12.93515],
+                [77.62560, 12.93515],
+                [77.62560, 12.93565],
+                [77.62525, 12.93565],
+                [77.62525, 12.93515]
+            ]]
+
         raw_bldgs = [
             {
                 "id": "BLDG_ALPHA",
@@ -122,13 +172,7 @@ class VistraPipeline:
                 },
                 "geometry": {
                     "type": "Polygon",
-                    "coordinates": [[
-                        [77.62450, 12.93510],
-                        [77.62510, 12.93510],
-                        [77.62510, 12.93570],
-                        [77.62450, 12.93570],
-                        [77.62450, 12.93510]
-                    ]]
+                    "coordinates": alpha_coords
                 }
             },
             {
@@ -145,13 +189,7 @@ class VistraPipeline:
                 },
                 "geometry": {
                     "type": "Polygon",
-                    "coordinates": [[
-                        [77.62525, 12.93515],
-                        [77.62560, 12.93515],
-                        [77.62560, 12.93565],
-                        [77.62525, 12.93565],
-                        [77.62525, 12.93515]
-                    ]]
+                    "coordinates": beta_coords
                 }
             }
         ]

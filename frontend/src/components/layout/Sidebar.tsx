@@ -51,13 +51,17 @@ export const Sidebar: React.FC = () => {
       {/* Brand Header */}
       <div>
         <div className="h-14 px-4 flex items-center justify-between border-b border-slate-200/80">
-          <div className="flex items-center space-x-3 overflow-hidden">
-            <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center font-extrabold text-white text-base shadow-xs shrink-0">
+          <div 
+            onClick={() => useCadastre().navigateTo('/')}
+            className="flex items-center space-x-3 overflow-hidden cursor-pointer group"
+            title="Go to VISTRA Landing Page"
+          >
+            <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center font-extrabold text-white text-base shadow-xs shrink-0 group-hover:scale-105 transition">
               V
             </div>
             {!collapsed && (
               <div className="leading-tight truncate">
-                <div className="font-extrabold text-sm tracking-wider text-slate-900 flex items-center space-x-1.5">
+                <div className="font-extrabold text-sm tracking-wider text-slate-900 flex items-center space-x-1.5 group-hover:text-blue-600 transition">
                   <span>VISTRA</span>
                 </div>
                 <div className="text-[9px] text-slate-500 tracking-wider font-semibold uppercase truncate">3D Cadastral Intelligence</div>

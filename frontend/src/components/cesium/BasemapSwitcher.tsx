@@ -3,7 +3,7 @@ import { useCadastre } from '../../store/CadastreContext';
 import { BasemapMode } from '../../types/cadastre';
 
 export const BasemapSwitcher: React.FC = () => {
-  const { basemap, setBasemap, activeJurisdiction } = useCadastre();
+  const { basemap, setBasemap, activeJurisdiction, currentProject } = useCadastre();
 
   const options: { id: BasemapMode; label: string }[] = [
     { id: 'light', label: 'Light Canvas' },
@@ -12,6 +12,10 @@ export const BasemapSwitcher: React.FC = () => {
     { id: 'terrain', label: 'Terrain' },
     { id: 'master_plan', label: 'Master Plan' }
   ];
+
+  const centerLon = activeJurisdiction?.center?.[0] ?? currentProject?.center?.[0] ?? 77.6250;
+  const centerLat = activeJurisdiction?.center?.[1] ?? currentProject?.center?.[1] ?? 12.9355;
+  const elevM = activeJurisdiction?.elevation_m ?? currentProject?.elevation_m ?? 920;
 
   return (
     <div className="absolute bottom-4 left-4 right-4 flex items-end justify-between pointer-events-none z-20">
@@ -50,10 +54,10 @@ export const BasemapSwitcher: React.FC = () => {
 
         {/* Coordinates & Elevation */}
         <div className="text-slate-600 font-medium">
-          <span>{activeJurisdiction?.center[1] ? `${activeJurisdiction.center[1].toFixed(4)}° N` : '12.9355° N'}, </span>
-          <span>{activeJurisdiction?.center[0] ? `${activeJurisdiction.center[0].toFixed(4)}° E` : '77.6250° E'}</span>
+          <span>{centerLat.toFixed(4)}° N, </span>
+          <span>{centerLon.toFixed(4)}° E</span>
           <span className="text-slate-400 mx-1">|</span>
-          <span className="text-blue-600 font-semibold">Elev. {activeJurisdiction?.elevation_m || 920} m</span>
+          <span className="text-blue-600 font-semibold">Elev. {elevM} m</span>
         </div>
       </div>
     </div>
