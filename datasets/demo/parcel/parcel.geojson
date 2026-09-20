@@ -1,0 +1,58 @@
+{
+  "type": "FeatureCollection",
+  "name": "Koramangala_Cadastral_Parcels",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "urn:ogc:def:crs:OGC:1.3:CRS84"
+    }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "id": "PARCEL_102_4A",
+      "properties": {
+        "survey_khasra_no": "102/4A",
+        "district": "BLR",
+        "state": "KA",
+        "country": "IN",
+        "village_ward": "Ward 151 - Koramangala",
+        "land_use": "Commercial Mixed-Use / High-Tech Innovation",
+        "base_elevation_m": 920.0,
+        "max_elevation_m": 965.0,
+        "owner_name": "Karnataka Industrial Area Development Board (KIADB) & Vistra Holdings",
+        "registered_area_sqm": 8450.0,
+        "classification": "Freehold Urban Title",
+        "surveyor_registration": "KSRSAC-CAD-2024-8841",
+        "verification_seal": "GOVT-KA-CADASTRAL-VERIFIED"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              77.6243,
+              12.9349
+            ],
+            [
+              77.6257,
+              12.9349
+            ],
+            [
+              77.6257,
+              12.9361
+            ],
+            [
+              77.6243,
+              12.9361
+            ],
+            [
+              77.6243,
+              12.9349
+            ]
+          ]
+        ]
+      }
+    }
+  ]
+}

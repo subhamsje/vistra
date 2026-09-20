@@ -58,16 +58,16 @@ export const Topbar: React.FC = () => {
       </div>
 
       {/* Global Property Search Bar */}
-      <div className="flex-1 max-w-xl mx-6">
+      <div className="flex-1 max-w-xl mx-6 min-w-0">
         <button
           onClick={() => setIsCommandPaletteOpen(true)}
           className="w-full h-8 bg-slate-900/80 hover:bg-slate-900 border border-white/10 rounded-lg px-3 flex items-center justify-between text-xs text-slate-400 group transition shadow-inner"
         >
-          <div className="flex items-center space-x-2">
-            <Search className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-400 transition" />
-            <span className="text-slate-400">Search by ULPIN, parcel ID, building, or location...</span>
+          <div className="flex items-center space-x-2 min-w-0 overflow-hidden">
+            <Search className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-400 transition shrink-0" />
+            <span className="text-slate-400 truncate whitespace-nowrap">Search by ULPIN, parcel ID, building, or location...</span>
           </div>
-          <div className="flex items-center space-x-1 bg-slate-800/80 px-1.5 py-0.5 rounded border border-white/10 text-[10px] text-slate-400">
+          <div className="flex items-center space-x-1 bg-slate-800/80 px-1.5 py-0.5 rounded border border-white/10 text-[10px] text-slate-400 shrink-0 ml-2">
             <Command className="w-2.5 h-2.5" />
             <span>K</span>
           </div>

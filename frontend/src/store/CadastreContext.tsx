@@ -133,6 +133,7 @@ export const CadastreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       setSelectedEntity(initEntity);
       if (initEntity && initEntity.building_id) {
         setSelectedBuildingId(initEntity.building_id);
+        setIsPropertyPanelOpen(true);
       }
     } catch (err) {
       console.error('Failed loading initial cadastre state', err);

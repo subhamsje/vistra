@@ -4,7 +4,7 @@ Generates CityJSON 1.1 / 2.0 structures, GeoJSON FeatureCollections, and Cesium 
 Supports local ground relative extrusion, vertical floor explosion, and semantic multi-storey styling.
 """
 
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 import json
 
 class Visualization3DSerializer:
@@ -107,7 +107,16 @@ class Visualization3DSerializer:
             }
         }
 
-    def generate_cesium_payload(self, parcels: List[Dict[str, Any]], buildings: List[Dict[str, Any]], floors: List[Dict[str, Any]], units: List[Dict[str, Any]], explode_factor: float = 0.0, selected_building_id: str = "B12", selected_entity_id: str = "B12_F3_U304") -> Dict[str, Any]:
+    def generate_cesium_payload(
+        self,
+        parcels: List[Dict[str, Any]],
+        buildings: List[Dict[str, Any]],
+        floors: List[Dict[str, Any]],
+        units: List[Dict[str, Any]],
+        explode_factor: float = 0.0,
+        selected_building_id: Optional[str] = None,
+        selected_entity_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Generates enriched GeoJSON/3D visualization objects ready for CesiumJS and Three.js.
         Calculates local ground relative elevations so geometry sits solidly on terrain,
@@ -116,65 +125,70 @@ class Visualization3DSerializer:
         """
         features = []
         ground_datum = 920.0
+        if parcels and "properties" in parcels[0]:
+            ground_datum = float(parcels[0]["properties"].get("base_elevation_m", 920.0))
 
         # 1. Parcels (Cadastral ground demarcation - Thin crisp boundary)
         for p in parcels:
             props = dict(p.get("properties", {}))
-            props["id"] = p["id"]
+            p_id = p["id"]
+            props["id"] = p_id
             props["ulpin_3d"] = p.get("ulpin_3d")
             props["entity_type"] = "PARCEL"
             props["color"] = "#22c55e" # Emerald green cadastral boundary
             props["local_base_m"] = 0.0
-            props["local_roof_m"] = 0.25
+            props["local_roof_m"] = 0.35
             props["amsl_base_m"] = props.get("base_elevation_m", ground_datum)
+            props["is_selected"] = (selected_entity_id == p_id or selected_entity_id == p.get("ulpin_3d"))
             features.append({
                 "type": "Feature",
-                "id": p["id"],
+                "id": p_id,
                 "geometry": p.get("geometry"),
                 "properties": props
             })
 
-        # Ensure selected_building_id defaults sanely
-        active_b_id = selected_building_id if any(b["id"] == selected_building_id for b in buildings) else "B12"
+        # Determine which buildings to explode into units vs render as solid context
+        bldg_ids = [b["id"] for b in buildings]
+        target_b_id = selected_building_id if (selected_building_id and selected_building_id in bldg_ids) else None
 
-        # 2. Buildings (Context buildings are semi-transparent solids; Selected building is segmented into floors)
+        # 2. Buildings
         for b in buildings:
             b_id = b["id"]
-            if b_id == active_b_id:
-                continue # The selected building is exploded into individual storeys and units below
-            
-            b_props = dict(b.get("properties", {}))
-            height = float(b_props.get("height_m", 15.0))
-            
-            features.append({
-                "type": "Feature",
-                "id": b_id,
-                "geometry": b.get("geometry"),
-                "properties": {
+            # If a specific building is selected and this is not it, render it as semi-transparent mass context
+            if target_b_id and b_id != target_b_id:
+                b_props = dict(b.get("properties", {}))
+                height = float(b_props.get("height_m", 15.0))
+                
+                features.append({
+                    "type": "Feature",
                     "id": b_id,
-                    "ulpin_3d": b.get("ulpin_3d"),
-                    "entity_type": "BUILDING",
-                    "building_id": b_id,
-                    "name": b_props.get("name", b_id),
-                    "local_base_m": 0.0,
-                    "local_roof_m": height,
-                    "height_m": height,
-                    "amsl_base_m": b_props.get("base_elevation_m", ground_datum),
-                    "amsl_roof_m": b_props.get("roof_elevation_m", ground_datum + height),
-                    "color": "#64748b", # Architectural slate glass
-                    "is_context": True,
-                    "audit_hash": b.get("audit_hash")
-                }
-            })
+                    "geometry": b.get("geometry"),
+                    "properties": {
+                        "id": b_id,
+                        "ulpin_3d": b.get("ulpin_3d"),
+                        "entity_type": "BUILDING",
+                        "building_id": b_id,
+                        "name": b_props.get("name", b_id),
+                        "local_base_m": 0.0,
+                        "local_roof_m": height,
+                        "height_m": height,
+                        "amsl_base_m": b_props.get("base_elevation_m", ground_datum),
+                        "amsl_roof_m": b_props.get("roof_elevation_m", ground_datum + height),
+                        "color": "#475569", # Architectural slate glass
+                        "is_context": True,
+                        "is_selected": (selected_entity_id == b_id or selected_entity_id == b.get("ulpin_3d")),
+                        "audit_hash": b.get("audit_hash")
+                    }
+                })
 
-        # 3. Units & Storeys for Selected Building
-        active_units = [u for u in units if any(f["id"] == u.get("floor_id") and f.get("building_id") == active_b_id for f in floors)]
+        # 3. Units & Storeys for exploded/active buildings
+        active_units = units if not target_b_id else [u for u in units if any(f["id"] == u.get("floor_id") and f.get("building_id") == target_b_id for f in floors)]
 
         for un in active_units:
             fl_id = un.get("floor_id")
             fl = next((f for f in floors if f["id"] == fl_id), None)
             fl_lvl = fl.get("floor_level", 1) if fl else 1
-            b_id = fl.get("building_id") if fl else active_b_id
+            b_id = fl.get("building_id") if fl else "BLDG_ALPHA"
 
             amsl_min = un.get("z_bounds", [920.0, 923.0])[0]
             amsl_max = un.get("z_bounds", [920.0, 923.0])[1]
@@ -194,26 +208,31 @@ class Visualization3DSerializer:
             exploded_base = local_min + (disp_lvl * explode_factor)
             exploded_roof = local_max + (disp_lvl * explode_factor)
 
-            # Vibrant floor palette matching reference screenshot (Yellow -> Green -> Cyan -> Blue -> Purple)
+            # Palette for floors
             if fl and fl.get("is_basement"):
                 color = "#475569" # Slate grey basement
             elif fl_lvl == 1:
-                color = "#eab308" # Vibrant Gold / Yellow
+                color = "#f59e0b" # Warm Amber
             elif fl_lvl == 2:
-                color = "#22c55e" # Vivid Emerald Green
+                color = "#10b981" # Emerald Green
             elif fl_lvl == 3:
-                color = "#06b6d4" # Bright Cyan (Selected floor 3)
-            elif fl_lvl == 4:
+                color = "#06b6d4" # Bright Cyan
+            elif fl_lvl == 3:
                 color = "#3b82f6" # Royal Blue
+            elif fl_lvl == 4:
+                color = "#8b5cf6" # Vibrant Purple
             elif fl_lvl == 5:
-                color = "#a855f7" # Vibrant Purple
+                color = "#ec4899" # Pink
             elif fl_lvl == 6:
-                color = "#ec4899" # Pink penthouse / terrace
-            else:
                 color = "#f43f5e" # Rose
+            else:
+                color = "#6366f1" # Indigo
+
+            u_id = un["id"]
+            is_selected = (selected_entity_id == u_id or selected_entity_id == un.get("ulpin_3d") or selected_entity_id == fl_id)
 
             props = {
-                "id": un["id"],
+                "id": u_id,
                 "ulpin_3d": un.get("ulpin_3d"),
                 "entity_type": "UNIT",
                 "building_id": b_id,
@@ -226,14 +245,15 @@ class Visualization3DSerializer:
                 "height_m": round(unit_h, 2),
                 "amsl_base_m": round(amsl_min, 2),
                 "amsl_roof_m": round(amsl_max, 2),
-                "color": color,
+                "color": "#facc15" if is_selected else color, # Highlight if selected
                 "is_context": False,
+                "is_selected": is_selected,
                 "audit_hash": un.get("audit_hash")
             }
 
             features.append({
                 "type": "Feature",
-                "id": un["id"],
+                "id": u_id,
                 "geometry": un.get("geometry_2d"),
                 "properties": props
             })

@@ -21,22 +21,33 @@ type CameraModeKey = 'city' | 'parcel' | 'building' | 'floor' | 'unit';
 
 const CAMERA_MODES: Record<CameraModeKey, CameraMode> = {
   city: { name: 'CITY VIEW', heading: 35, pitch: -28, rangeFactor: 1.0 },
-  parcel: { name: 'PARCEL VIEW', heading: 45, pitch: -35, rangeFactor: 0.5 },
-  building: { name: 'BUILDING VIEW', heading: 35, pitch: -30, rangeFactor: 0.3 },
-  floor: { name: 'FLOOR VIEW', heading: 0, pitch: -60, rangeFactor: 0.15 },
-  unit: { name: 'UNIT VIEW', heading: 0, pitch: -75, rangeFactor: 0.08 },
+  parcel: { name: 'PARCEL VIEW', heading: 45, pitch: -35, rangeFactor: 0.55 },
+  building: { name: 'BUILDING VIEW', heading: 35, pitch: -30, rangeFactor: 0.35 },
+  floor: { name: 'FLOOR VIEW', heading: 20, pitch: -45, rangeFactor: 0.18 },
+  unit: { name: 'UNIT VIEW', heading: 15, pitch: -50, rangeFactor: 0.10 },
 };
 
-const ENTITY_COLORS: Record<EntityType, { fill: string; outline: string }> = {
-  PARCEL: { fill: '#22c55e', outline: '#16a34a' },
-  BUILDING: { fill: '#3b82f6', outline: '#2563eb' },
-  FLOOR: { fill: '#06b6d4', outline: '#0891b2' },
-  UNIT: { fill: '#a855f7', outline: '#9333ea' },
-  UNDERGROUND: { fill: '#ec4899', outline: '#db2777' },
-  COMMON_AREA: { fill: '#f59e0b', outline: '#d97706' },
+// Sophisticated Deep-Tech Palettes for Cadastral Entities
+const ENTITY_COLORS: Record<EntityType, { fill: string; outline: string; highlight: string }> = {
+  PARCEL: { fill: '#10b981', outline: '#059669', highlight: '#34d399' },
+  BUILDING: { fill: '#0284c7', outline: '#0369a1', highlight: '#38bdf8' },
+  FLOOR: { fill: '#06b6d4', outline: '#0891b2', highlight: '#67e8f9' },
+  UNIT: { fill: '#8b5cf6', outline: '#7c3aed', highlight: '#c084fc' },
+  UNDERGROUND: { fill: '#ec4899', outline: '#db2777', highlight: '#f472b6' },
+  COMMON_AREA: { fill: '#f59e0b', outline: '#d97706', highlight: '#fbbf24' },
 };
 
-const CONTEXT_BUILDING_COLOR = { fill: '#475569', outline: '#334155' };
+// Floor color gradient palette for distinct architectural distinction
+const FLOOR_GRADIENTS = [
+  { fill: '#f59e0b', outline: '#d97706' }, // Floor 1 (Gold)
+  { fill: '#10b981', outline: '#059669' }, // Floor 2 (Emerald)
+  { fill: '#06b6d4', outline: '#0891b2' }, // Floor 3 (Cyan)
+  { fill: '#3b82f6', outline: '#2563eb' }, // Floor 4 (Blue)
+  { fill: '#8b5cf6', outline: '#7c3aed' }, // Floor 5 (Purple)
+  { fill: '#ec4899', outline: '#db2777' }, // Floor 6 (Pink)
+];
+
+const CONTEXT_BUILDING_COLOR = { fill: '#334155', outline: '#475569' };
 
 export const CesiumViewer: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -45,16 +56,12 @@ export const CesiumViewer: React.FC = () => {
   const roadsSourceRef = useRef<any>(null);
   const undergroundSourceRef = useRef<any>(null);
   const validationSourceRef = useRef<any>(null);
-  const selectionIndicatorRef = useRef<any>(null);
 
-  const [imageryLoaded, setImageryLoaded] = useState(true);
   const [loading3D, setLoading3D] = useState(true);
-  const [currentCameraMode, setCurrentCameraMode] = useState<'city' | 'parcel' | 'building' | 'floor' | 'unit'>('city');
-  const [viewMode, setViewMode] = useState<'reality' | 'analysis'>('reality');
+  const [currentCameraMode, setCurrentCameraMode] = useState<CameraModeKey>('city');
   const entityBoundingBoxes = useRef<Map<string, BoundingBox>>(new Map());
 
   // Measurement tool state
-  const [measureType, setMeasureType] = useState<'distance' | 'height'>('distance');
   const [measurePoints, setMeasurePoints] = useState<any[]>([]);
   const [measureResult, setMeasureResult] = useState<{
     distance: number;
@@ -68,13 +75,10 @@ export const CesiumViewer: React.FC = () => {
 
   // Section clipping plane state
   const [sectionHeight, setSectionHeight] = useState<number>(30); // 0 to 60 meters elevation
-  const [sectionPlaneActive, setSectionPlaneActive] = useState<boolean>(false);
 
-  // Point Cloud Primitive Collection Ref
+  // Primitives ref
   const pointCloudPrimitivesRef = useRef<any>(null);
-  // DEM Grid Primitive Collection Ref
   const demPrimitivesRef = useRef<any>(null);
-  // Orbit listener removal ref
   const orbitListenerRef = useRef<any>(null);
 
   const { 
@@ -85,11 +89,11 @@ export const CesiumViewer: React.FC = () => {
     selectedEntity,
     setSelectedEntityId,
     selectedBuildingId,
-    setSelectedBuildingId,
     activeJurisdiction,
     flyToTarget,
     setFlyToTarget,
-    activeView,
+    viewMode,
+    setViewMode,
     activeTool,
     setActiveTool,
     cameraMode,
@@ -161,7 +165,7 @@ export const CesiumViewer: React.FC = () => {
       maxDist = Math.max(maxDist, dist);
     });
     
-    return new Cesium.BoundingSphere(center, maxDist * 1.2);
+    return new Cesium.BoundingSphere(center, Math.max(maxDist * 1.3, 20));
   }, []);
 
   const flyToEntity = useCallback((entityId: string, mode: CameraModeKey = 'building') => {
@@ -169,16 +173,32 @@ export const CesiumViewer: React.FC = () => {
     if (!viewer) return;
 
     const bbox = entityBoundingBoxes.current.get(entityId);
-    if (!bbox) return;
+    if (!bbox) {
+      // Fallback target if entity bounding box not yet cached
+      const targetCenter = Cesium.Cartesian3.fromDegrees(77.62515, 12.9358, 20.0);
+      viewer.camera.flyToBoundingSphere(
+        new Cesium.BoundingSphere(targetCenter, 80),
+        {
+          offset: new Cesium.HeadingPitchRange(
+            Cesium.Math.toRadians(35),
+            Cesium.Math.toRadians(-30),
+            120
+          ),
+          duration: 1.2,
+          complete: () => setCurrentCameraMode(mode)
+        }
+      );
+      return;
+    }
 
-    const cameraMode = CAMERA_MODES[mode];
+    const modeConfig = CAMERA_MODES[mode];
     const boundingSphere = computeBoundingSphere(bbox);
-    const range = boundingSphere.radius * cameraMode.rangeFactor * 2;
+    const range = Math.max(boundingSphere.radius * modeConfig.rangeFactor * 3.5, 30);
 
     viewer.camera.flyToBoundingSphere(boundingSphere, {
       offset: new Cesium.HeadingPitchRange(
-        Cesium.Math.toRadians(cameraMode.heading),
-        Cesium.Math.toRadians(cameraMode.pitch),
+        Cesium.Math.toRadians(modeConfig.heading),
+        Cesium.Math.toRadians(modeConfig.pitch),
         range
       ),
       duration: 1.2,
@@ -188,134 +208,119 @@ export const CesiumViewer: React.FC = () => {
     });
   }, [computeBoundingSphere]);
 
-  const flyToValidationIssue = useCallback((issueId: string) => {
-    const viewer = viewerRef.current;
-    if (!viewer || !validationSourceRef.current) return;
-
-    const entity = validationSourceRef.current.entities.getById(issueId);
-    if (!entity) return;
-
-    const bbox = calculateBoundingBox(entity);
-    if (!bbox) return;
-
-    const boundingSphere = computeBoundingSphere(bbox);
-    
-    viewer.camera.flyToBoundingSphere(boundingSphere, {
-      offset: new Cesium.HeadingPitchRange(
-        Cesium.Math.toRadians(45),
-        Cesium.Math.toRadians(-45),
-        boundingSphere.radius * 3
-      ),
-      duration: 1.5
-    });
-  }, [calculateBoundingBox, computeBoundingSphere]);
-
+  // Initial Cesium Scene Setup
   useEffect(() => {
-    if (!containerRef.current || viewerRef.current) return;
+    let isCancelled = false;
+    let timer: any = null;
 
-    if (typeof Cesium === 'undefined') {
-      console.error('Cesium is not loaded globally.');
-      return;
-    }
+    const initViewer = () => {
+      if (isCancelled || !containerRef.current || viewerRef.current) return;
 
-    Cesium.Ion.defaultAccessToken = '';
-
-    const imageryProvider = new Cesium.UrlTemplateImageryProvider({
-      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-      maximumLevel: 19,
-      credit: 'Esri World Imagery'
-    });
-
-    const viewer = new Cesium.Viewer(containerRef.current, {
-      imageryProvider: imageryProvider,
-      terrainProvider: new Cesium.EllipsoidTerrainProvider(),
-      baseLayerPicker: false,
-      geocoder: false,
-      homeButton: false,
-      sceneModePicker: false,
-      navigationHelpButton: false,
-      animation: false,
-      timeline: false,
-      fullscreenButton: false,
-      infoBox: false,
-      selectionIndicator: false,
-      orderIndependentTranslucency: true,
-      contextOptions: {
-        webgl: {
-          alpha: true,
-          preserveDrawingBuffer: true
-        }
+      if (typeof Cesium === 'undefined') {
+        timer = setTimeout(initViewer, 100);
+        return;
       }
-    });
 
-    viewer.scene.globe.depthTestAgainstTerrain = true;
-    viewer.scene.globe.enableLighting = true;
-    viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString('#0b0f19');
-    viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#0b0f19');
-    viewer.scene.sun.show = true;
-    viewer.scene.moon.show = false;
-    viewer.scene.skyAtmosphere.show = true;
-    viewer.scene.skyAtmosphere.hueShift = -0.1;
-    viewer.scene.skyAtmosphere.saturationShift = -0.2;
-    viewer.scene.skyAtmosphere.brightnessShift = -0.3;
-    viewer.scene.fog.enabled = true;
-    viewer.scene.fog.density = 0.0003;
-    viewer.scene.fog.minimumBrightness = 0.1;
-    viewer.scene.fog.screenSpaceErrorFactor = 1.0;
+      try {
+        Cesium.Ion.defaultAccessToken = '';
 
-    viewer.shadows = true;
-    viewer.shadowMap.enabled = true;
-    viewer.shadowMap.softShadows = true;
-    viewer.shadowMap.darkness = 0.4;
-    viewer.shadowMap.maximumDistance = 50000;
-
-    if (activeJurisdiction) {
-      const targetCenter = Cesium.Cartesian3.fromDegrees(
-        activeJurisdiction.center[0], 
-        activeJurisdiction.center[1], 
-        activeJurisdiction.elevation_m || 10.0
-      );
-
-      viewer.camera.flyToBoundingSphere(
-        new Cesium.BoundingSphere(targetCenter, 500),
-        {
-          offset: new Cesium.HeadingPitchRange(
-            Cesium.Math.toRadians(35),
-            Cesium.Math.toRadians(-28),
-            1200
-          ),
-          duration: 1.5,
+        // Create initial imagery provider
+        let initialProvider: any = null;
+        try {
+          initialProvider = new Cesium.UrlTemplateImageryProvider({
+            url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+            maximumLevel: 19,
+            credit: 'Esri World Imagery'
+          });
+        } catch (e) {
+          console.warn('Initial imagery provider fallback:', e);
         }
-      );
-    }
 
-    const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
-    
-    handler.setInputAction((movement: any) => {
-      const picked = viewer.scene.pick(movement.position);
-      if (Cesium.defined(picked) && picked.id && picked.id.properties) {
-        const props = picked.id.properties;
-        const eId = props.id ? props.id.getValue() : (picked.id.id || '');
-        if (eId) {
-          setSelectedEntityId(eId);
+        // Create viewer with dark deep-tech spatial canvas
+        const viewer = new Cesium.Viewer(containerRef.current, {
+          imageryProvider: initialProvider || false,
+          terrainProvider: new Cesium.EllipsoidTerrainProvider(),
+          baseLayerPicker: false,
+          geocoder: false,
+          homeButton: false,
+          sceneModePicker: false,
+          navigationHelpButton: false,
+          animation: false,
+          timeline: false,
+          fullscreenButton: false,
+          infoBox: false,
+          selectionIndicator: false,
+          skyAtmosphere: false,
+          skyBox: false,
+          orderIndependentTranslucency: true,
+          contextOptions: {
+            webgl: {
+              alpha: true,
+              preserveDrawingBuffer: true
+            }
+          }
+        });
+
+        // Dark high-tech cosmos configuration - zero blue haze
+        if (viewer.scene.skyAtmosphere) {
+          viewer.scene.skyAtmosphere.show = false;
         }
+        if (viewer.scene.skyBox) {
+          viewer.scene.skyBox.show = false;
+        }
+        if (viewer.scene.sun) {
+          viewer.scene.sun.show = false;
+        }
+        if (viewer.scene.moon) {
+          viewer.scene.moon.show = false;
+        }
+
+        viewer.scene.globe.depthTestAgainstTerrain = false;
+        viewer.scene.globe.enableLighting = false;
+        viewer.scene.globe.showGroundAtmosphere = false;
+        viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString('#070b14');
+        viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#070b14');
+        viewer.scene.fog.enabled = false;
+        viewer.shadows = false;
+
+        // Initial camera position directly looking down at Koramangala site (77.62515, 12.9358)
+        const initLon = activeJurisdiction?.center ? activeJurisdiction.center[0] : 77.62515;
+        const initLat = activeJurisdiction?.center ? activeJurisdiction.center[1] : 12.9358;
+
+        viewer.camera.setView({
+          destination: Cesium.Cartesian3.fromDegrees(initLon - 0.0016, initLat - 0.0022, 280.0),
+          orientation: {
+            heading: Cesium.Math.toRadians(35),
+            pitch: Cesium.Math.toRadians(-38),
+            roll: 0.0
+          }
+        });
+
+        // Entity click picking handler
+        const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+        
+        handler.setInputAction((movement: any) => {
+          const picked = viewer.scene.pick(movement.position);
+          if (Cesium.defined(picked) && picked.id && picked.id.properties) {
+            const props = picked.id.properties;
+            const eId = props.id ? props.id.getValue() : (picked.id.id || '');
+            if (eId) {
+              setSelectedEntityId(eId);
+            }
+          }
+        }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+        viewerRef.current = viewer;
+      } catch (err) {
+        console.error('Error initializing Cesium viewer:', err);
       }
-    }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+    };
 
-    handler.setInputAction((movement: any) => {
-      const picked = viewer.scene.pick(movement.endPosition);
-      if (Cesium.defined(picked) && picked.id && picked.id.properties) {
-        const props = picked.id.properties;
-        const eId = props.id ? props.id.getValue() : (picked.id.id || '');
-        if (eId && selectionIndicatorRef.current) {
-          selectionIndicatorRef.current.showSelection(eId);
-        }
-      }
-    }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
-
-    viewerRef.current = viewer;
+    initViewer();
 
     return () => {
+      isCancelled = true;
+      if (timer) clearTimeout(timer);
       if (viewerRef.current) {
         viewerRef.current.destroy();
         viewerRef.current = null;
@@ -323,80 +328,93 @@ export const CesiumViewer: React.FC = () => {
     };
   }, [activeJurisdiction, setSelectedEntityId]);
 
+  // Robust Basemap Imagery Layer Switcher (Handles Failures Gracefully)
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
 
-    let newProvider;
-    if (basemap === 'streets') {
-      newProvider = new Cesium.UrlTemplateImageryProvider({
-        url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-        maximumLevel: 19
-      });
-    } else if (basemap === 'night') {
-      newProvider = new Cesium.UrlTemplateImageryProvider({
-        url: 'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
-        subdomains: ['a', 'b', 'c', 'd'],
-        maximumLevel: 19
-      });
-    } else if (basemap === 'terrain') {
-      newProvider = new Cesium.UrlTemplateImageryProvider({
-        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
-        maximumLevel: 19
-      });
-    } else if (basemap === 'master_plan') {
-      newProvider = new Cesium.UrlTemplateImageryProvider({
-        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
-        maximumLevel: 19
-      });
-    } else {
-      newProvider = new Cesium.UrlTemplateImageryProvider({
-        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        maximumLevel: 19
-      });
+    let provider: any = null;
+
+    try {
+      if (basemap === 'streets') {
+        provider = new Cesium.UrlTemplateImageryProvider({
+          url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+          maximumLevel: 19,
+          credit: 'OpenStreetMap'
+        });
+      } else if (basemap === 'night') {
+        provider = new Cesium.UrlTemplateImageryProvider({
+          url: 'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+          subdomains: ['a', 'b', 'c', 'd'],
+          maximumLevel: 19,
+          credit: 'CartoDB Dark'
+        });
+      } else if (basemap === 'terrain') {
+        provider = new Cesium.UrlTemplateImageryProvider({
+          url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+          maximumLevel: 19,
+          credit: 'Esri Topo'
+        });
+      } else if (basemap === 'master_plan') {
+        provider = new Cesium.UrlTemplateImageryProvider({
+          url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+          maximumLevel: 19,
+          credit: 'Esri Street'
+        });
+      } else if (basemap === 'satellite') {
+        provider = new Cesium.UrlTemplateImageryProvider({
+          url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+          maximumLevel: 19,
+          credit: 'Esri World Imagery'
+        });
+      }
+    } catch (e) {
+      console.warn('Basemap imagery provider init fallback:', e);
+      provider = null;
     }
 
     try {
       viewer.imageryLayers.removeAll();
-      viewer.imageryLayers.addImageryProvider(newProvider);
-      
-      if (viewMode === 'analysis') {
-        const analysisLayer = viewer.imageryLayers.addImageryProvider(newProvider);
-        analysisLayer.alpha = 0.3;
-        analysisLayer.brightness = 1.2;
-        analysisLayer.contrast = 1.3;
-        analysisLayer.saturation = 0.3;
-        analysisLayer.gamma = 1.1;
+      if (provider) {
+        const layer = viewer.imageryLayers.addImageryProvider(provider);
+        if (layer) {
+          // Keep satellite tone clean and subdued to let 3D property geometries pop
+          layer.brightness = viewMode === 'ANALYSIS' ? 0.7 : 0.85;
+          layer.contrast = 1.15;
+          layer.saturation = viewMode === 'ANALYSIS' ? 0.2 : 0.7;
+          layer.alpha = viewMode === 'ANALYSIS' ? 0.35 : 0.85;
+        }
       }
     } catch (e) {
-      console.warn('Could not switch basemap', e);
+      console.warn('Could not switch basemap layer, falling back to spatial grid canvas', e);
     }
   }, [basemap, viewMode]);
 
+  // Styling logic for 3D Cadastral Entities
   const applyEntityStyling = useCallback((
     entity: any, 
     props: any, 
     eType: EntityType, 
     eId: string, 
-    flLvl: number,
-    isContext: boolean,
-    baseAlpha: number,
-    selectedId: string,
+    flLvl: number, 
+    isContext: boolean, 
+    baseAlpha: number, 
+    selectedId: string, 
     selectedFloorNum: number
   ) => {
     if (!entity.polygon) return;
 
-    const colors = ENTITY_COLORS[eType] || { fill: '#3b82f6', outline: '#2563eb' };
     const isSelected = eId === selectedId;
     const isFloorSelected = flLvl === selectedFloorNum && selectedFloorNum > 0;
+    const colors = ENTITY_COLORS[eType] || ENTITY_COLORS.BUILDING;
 
     if (eType === 'PARCEL') {
-      entity.polygon.height = 0.1;
-      entity.polygon.extrudedHeight = 0.5;
-      entity.polygon.material = Cesium.Color.fromCssColorString(colors.fill).withAlpha(0.15);
+      entity.polygon.height = 0.05;
+      entity.polygon.extrudedHeight = 0.25;
+      entity.polygon.material = Cesium.Color.fromCssColorString(isSelected ? '#34d399' : '#10b981').withAlpha(isSelected ? 0.35 : 0.15);
       entity.polygon.outline = true;
-      entity.polygon.outlineColor = Cesium.Color.fromCssColorString(colors.outline).withAlpha(0.9);
-      entity.polygon.outlineWidth = 3;
+      entity.polygon.outlineColor = Cesium.Color.fromCssColorString(isSelected ? '#34d399' : '#059669').withAlpha(0.95);
+      entity.polygon.outlineWidth = isSelected ? 4 : 2;
       entity.polygon.perPositionHeight = false;
       entity.polygon.closeTop = true;
       entity.polygon.closeBottom = true;
@@ -406,11 +424,12 @@ export const CesiumViewer: React.FC = () => {
       if (bbox) entityBoundingBoxes.current.set(eId, bbox);
       
     } else if (isContext) {
+      // Subdued context buildings around selected site
       entity.polygon.height = props.local_base_m?.getValue() || 0;
       entity.polygon.extrudedHeight = props.local_roof_m?.getValue() || 15;
-      entity.polygon.material = Cesium.Color.fromCssColorString(CONTEXT_BUILDING_COLOR.fill).withAlpha(0.25 * baseAlpha);
+      entity.polygon.material = Cesium.Color.fromCssColorString(CONTEXT_BUILDING_COLOR.fill).withAlpha(0.28 * baseAlpha);
       entity.polygon.outline = true;
-      entity.polygon.outlineColor = Cesium.Color.WHITE.withAlpha(0.3);
+      entity.polygon.outlineColor = Cesium.Color.fromCssColorString(CONTEXT_BUILDING_COLOR.outline).withAlpha(0.5);
       entity.polygon.outlineWidth = 1;
       entity.polygon.perPositionHeight = false;
       entity.polygon.closeTop = true;
@@ -423,7 +442,7 @@ export const CesiumViewer: React.FC = () => {
     } else if (eType === 'BUILDING') {
       entity.polygon.height = props.local_base_m?.getValue() || 0;
       entity.polygon.extrudedHeight = props.local_roof_m?.getValue() || 18;
-      entity.polygon.material = Cesium.Color.fromCssColorString(colors.fill).withAlpha(isSelected ? 0.9 : 0.6 * baseAlpha);
+      entity.polygon.material = Cesium.Color.fromCssColorString(colors.fill).withAlpha(isSelected ? 0.92 : 0.65 * baseAlpha);
       entity.polygon.outline = true;
       entity.polygon.outlineColor = isSelected 
         ? Cesium.Color.fromCssColorString('#38bdf8').withAlpha(1.0)
@@ -441,15 +460,13 @@ export const CesiumViewer: React.FC = () => {
       entity.polygon.height = props.local_base_m?.getValue() || 0;
       entity.polygon.extrudedHeight = props.local_roof_m?.getValue() || 3;
       
-      const floorPalettes = ['#eab308', '#10b981', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
-      const floorColor = floorPalettes[Math.abs(flLvl) % floorPalettes.length];
-
-      entity.polygon.material = Cesium.Color.fromCssColorString(floorColor).withAlpha(isFloorSelected ? 0.95 : 0.65 * baseAlpha);
+      const floorGrad = FLOOR_GRADIENTS[Math.abs(flLvl - 1) % FLOOR_GRADIENTS.length];
+      entity.polygon.material = Cesium.Color.fromCssColorString(floorGrad.fill).withAlpha(isFloorSelected ? 0.95 : 0.70 * baseAlpha);
       entity.polygon.outline = true;
       entity.polygon.outlineColor = isFloorSelected
         ? Cesium.Color.fromCssColorString('#38bdf8').withAlpha(1.0)
-        : Cesium.Color.WHITE.withAlpha(0.6);
-      entity.polygon.outlineWidth = isFloorSelected ? 3 : 1.5;
+        : Cesium.Color.WHITE.withAlpha(0.65);
+      entity.polygon.outlineWidth = isFloorSelected ? 3.5 : 1.5;
       entity.polygon.perPositionHeight = false;
       entity.polygon.closeTop = true;
       entity.polygon.closeBottom = true;
@@ -462,23 +479,23 @@ export const CesiumViewer: React.FC = () => {
       entity.polygon.height = props.local_base_m?.getValue() || 0;
       entity.polygon.extrudedHeight = props.local_roof_m?.getValue() || 3;
       
-      const floorPalettes = ['#eab308', '#10b981', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
-      const unitBaseColor = floorPalettes[Math.abs(flLvl) % floorPalettes.length];
-
+      const floorGrad = FLOOR_GRADIENTS[Math.abs(flLvl - 1) % FLOOR_GRADIENTS.length];
+      
       if (isSelected) {
-        entity.polygon.material = Cesium.Color.fromCssColorString('#38bdf8').withAlpha(0.95);
+        // High-contrast cyan/sky hero highlight for selected property unit
+        entity.polygon.material = Cesium.Color.fromCssColorString('#38bdf8').withAlpha(0.96);
         entity.polygon.outline = true;
         entity.polygon.outlineColor = Cesium.Color.WHITE.withAlpha(1.0);
         entity.polygon.outlineWidth = 4;
       } else if (isFloorSelected) {
-        entity.polygon.material = Cesium.Color.fromCssColorString(unitBaseColor).withAlpha(0.85);
+        entity.polygon.material = Cesium.Color.fromCssColorString(floorGrad.fill).withAlpha(0.88);
         entity.polygon.outline = true;
-        entity.polygon.outlineColor = Cesium.Color.WHITE.withAlpha(0.8);
+        entity.polygon.outlineColor = Cesium.Color.WHITE.withAlpha(0.85);
         entity.polygon.outlineWidth = 2;
       } else {
-        entity.polygon.material = Cesium.Color.fromCssColorString(unitBaseColor).withAlpha(0.55 * baseAlpha);
+        entity.polygon.material = Cesium.Color.fromCssColorString(floorGrad.fill).withAlpha(0.55 * baseAlpha);
         entity.polygon.outline = true;
-        entity.polygon.outlineColor = Cesium.Color.WHITE.withAlpha(0.4);
+        entity.polygon.outlineColor = Cesium.Color.WHITE.withAlpha(0.35);
         entity.polygon.outlineWidth = 1;
       }
       entity.polygon.perPositionHeight = false;
@@ -504,6 +521,7 @@ export const CesiumViewer: React.FC = () => {
     }
   }, [calculateBoundingBox, layers]);
 
+  // Load 3D Cadastral GeoJSON Data from Backend
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
@@ -526,7 +544,7 @@ export const CesiumViewer: React.FC = () => {
         const geojson = await cadastreApi.getCesiumGeoJSON(explodeFactor, bId, sId);
         const ds = await Cesium.GeoJsonDataSource.load(geojson, { clampToGround: false });
 
-        const baseAlpha = Math.max(0.1, (100 - buildingTransparency) / 100);
+        const baseAlpha = Math.max(0.15, (100 - buildingTransparency) / 100);
         const selectedId = selectedEntity?.entity_id || '';
         const selectedFloorNum = selectedEntity?.floor_level ?? 0;
 
@@ -560,7 +578,7 @@ export const CesiumViewer: React.FC = () => {
               entity.polygon.extrudedHeight = entity.properties.local_roof_m?.getValue() || 3;
             } else if (entity.polyline) {
               entity.polyline.material = Cesium.Color.fromCssColorString('#ef4444').withAlpha(0.9);
-              entity.polyline.width = 5;
+              entity.polyline.width = 4;
               entity.polyline.clampToGround = false;
             }
             entity.show = layers.validation;
@@ -584,6 +602,7 @@ export const CesiumViewer: React.FC = () => {
       layers.parcelBoundaries, layers.buildings3d, layers.floorsUnits, layers.underground, layers.validation,
       applyEntityStyling]);
 
+  // Manage Real Road & Underground Networks
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
@@ -593,8 +612,8 @@ export const CesiumViewer: React.FC = () => {
         if (!roadsSourceRef.current) {
           const rGeo = await cadastreApi.getRoadsGeoJSON();
           const rDs = await Cesium.GeoJsonDataSource.load(rGeo, {
-            stroke: Cesium.Color.fromCssColorString('#94a3b8').withAlpha(0.7),
-            strokeWidth: 4,
+            stroke: Cesium.Color.fromCssColorString('#64748b').withAlpha(0.85),
+            strokeWidth: 3,
             clampToGround: true
           });
           viewer.dataSources.add(rDs);
@@ -611,8 +630,8 @@ export const CesiumViewer: React.FC = () => {
         if (!undergroundSourceRef.current) {
           const uGeo = await cadastreApi.getUndergroundGeoJSON();
           const uDs = await Cesium.GeoJsonDataSource.load(uGeo, {
-            stroke: Cesium.Color.fromCssColorString('#ec4899').withAlpha(0.9),
-            strokeWidth: 6,
+            stroke: Cesium.Color.fromCssColorString('#ec4899').withAlpha(0.95),
+            strokeWidth: 5,
             clampToGround: false
           });
           viewer.dataSources.add(uDs);
@@ -628,7 +647,7 @@ export const CesiumViewer: React.FC = () => {
     handleUnderground();
   }, [layers.roads, layers.underground]);
 
-  // Underground visualization: enable globe translucency and disable collision detection
+  // Underground globe translucency
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer || !viewer.scene || !viewer.scene.globe) return;
@@ -644,15 +663,12 @@ export const CesiumViewer: React.FC = () => {
     }
   }, [layers.underground]);
 
-  // Section Clipping Plane effect
+  // Section Clipping Plane
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer || !viewer.scene || !viewer.scene.globe) return;
 
     if (activeTool === 'section') {
-      setSectionPlaneActive(true);
-      // Create clipping plane cutting vertically down at the given elevation
-      // Normal pointing DOWN (0, 0, -1) with distance = sectionHeight
       const plane = new Cesium.ClippingPlane(
         new Cesium.Cartesian3(0.0, 0.0, -1.0),
         sectionHeight
@@ -666,12 +682,11 @@ export const CesiumViewer: React.FC = () => {
       });
       viewer.scene.globe.clippingPlanes = collection;
     } else {
-      setSectionPlaneActive(false);
       viewer.scene.globe.clippingPlanes = undefined;
     }
   }, [activeTool, sectionHeight]);
 
-  // LiDAR Point Cloud Simulation effect
+  // LiDAR Point Cloud Simulation
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
@@ -679,37 +694,33 @@ export const CesiumViewer: React.FC = () => {
     if (layers.lidarPointCloud) {
       if (!pointCloudPrimitivesRef.current) {
         const pointCollection = viewer.scene.primitives.add(new Cesium.PointPrimitiveCollection());
-        // Generate realistic LiDAR scan points around the center coordinates
-        const center = activeJurisdiction?.center || [77.5925, 12.9725];
-        const numPoints = 1200;
+        const center = [77.6248, 12.9356];
+        const numPoints = 1400;
         
         for (let i = 0; i < numPoints; i++) {
-          // Spread in ~150m radius
-          const offsetLon = (Math.random() - 0.5) * 0.003;
+          const offsetLon = (Math.random() - 0.5) * 0.004;
           const offsetLat = (Math.random() - 0.5) * 0.003;
           const lon = center[0] + offsetLon;
           const lat = center[1] + offsetLat;
           
-          // Realistic building elevation distribution: ground points, wall points, roof points
           let z = 0;
           const r = Math.random();
-          if (r < 0.3) {
-            z = Math.random() * 0.5; // ground
-          } else if (r < 0.7) {
-            z = Math.random() * 22; // building facades
+          if (r < 0.25) {
+            z = Math.random() * 0.5;
+          } else if (r < 0.75) {
+            z = Math.random() * 20;
           } else {
-            z = 18 + Math.random() * 4; // roofs
+            z = 18 + Math.random() * 3;
           }
 
-          // Spectrum color ramp: blue (low) -> cyan -> green -> yellow -> red (high)
-          let color = Cesium.Color.fromCssColorString('#3b82f6');
+          let color = Cesium.Color.fromCssColorString('#38bdf8');
           if (z < 2) color = Cesium.Color.fromCssColorString('#10b981');
           else if (z < 8) color = Cesium.Color.fromCssColorString('#06b6d4');
           else if (z < 15) color = Cesium.Color.fromCssColorString('#eab308');
-          else color = Cesium.Color.fromCssColorString('#ef4444');
+          else color = Cesium.Color.fromCssColorString('#f43f5e');
 
           pointCollection.add({
-            position: Cesium.Cartesian3.fromDegrees(lon, lat, (activeJurisdiction?.elevation_m || 0) + z),
+            position: Cesium.Cartesian3.fromDegrees(lon, lat, z),
             color: color.withAlpha(0.85),
             pixelSize: 3.5
           });
@@ -720,9 +731,9 @@ export const CesiumViewer: React.FC = () => {
     } else if (pointCloudPrimitivesRef.current) {
       pointCloudPrimitivesRef.current.show = false;
     }
-  }, [layers.lidarPointCloud, activeJurisdiction]);
+  }, [layers.lidarPointCloud]);
 
-  // DEM / DSM Grid Wireframe Simulation effect
+  // DEM / DSM Grid Wireframe Simulation
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
@@ -730,21 +741,19 @@ export const CesiumViewer: React.FC = () => {
     if (layers.demDsm) {
       if (!demPrimitivesRef.current) {
         const polylineCollection = viewer.scene.primitives.add(new Cesium.PolylineCollection());
-        const center = activeJurisdiction?.center || [77.5925, 12.9725];
+        const center = [77.62515, 12.9358];
         const gridStep = 0.0004;
         const gridCount = 10;
         const startLon = center[0] - (gridCount * gridStep) / 2;
         const startLat = center[1] - (gridCount * gridStep) / 2;
 
-        // Longitude lines
         for (let i = 0; i <= gridCount; i++) {
           const lon = startLon + i * gridStep;
-          const pos = [
-            Cesium.Cartesian3.fromDegrees(lon, startLat, 0.5),
-            Cesium.Cartesian3.fromDegrees(lon, startLat + gridCount * gridStep, 0.5)
-          ];
           polylineCollection.add({
-            positions: pos,
+            positions: [
+              Cesium.Cartesian3.fromDegrees(lon, startLat, 0.5),
+              Cesium.Cartesian3.fromDegrees(lon, startLat + gridCount * gridStep, 0.5)
+            ],
             width: 1.5,
             material: Cesium.Material.fromType('Color', {
               color: Cesium.Color.fromCssColorString('#14b8a6').withAlpha(0.4)
@@ -752,15 +761,13 @@ export const CesiumViewer: React.FC = () => {
           });
         }
 
-        // Latitude lines
         for (let j = 0; j <= gridCount; j++) {
           const lat = startLat + j * gridStep;
-          const pos = [
-            Cesium.Cartesian3.fromDegrees(startLon, lat, 0.5),
-            Cesium.Cartesian3.fromDegrees(startLon + gridCount * gridStep, lat, 0.5)
-          ];
           polylineCollection.add({
-            positions: pos,
+            positions: [
+              Cesium.Cartesian3.fromDegrees(startLon, lat, 0.5),
+              Cesium.Cartesian3.fromDegrees(startLon + gridCount * gridStep, lat, 0.5)
+            ],
             width: 1.5,
             material: Cesium.Material.fromType('Color', {
               color: Cesium.Color.fromCssColorString('#14b8a6').withAlpha(0.4)
@@ -773,14 +780,13 @@ export const CesiumViewer: React.FC = () => {
     } else if (demPrimitivesRef.current) {
       demPrimitivesRef.current.show = false;
     }
-  }, [layers.demDsm, activeJurisdiction]);
+  }, [layers.demDsm]);
 
-  // Camera Mode handler (TOP_DOWN 2D, ORBIT Turntable, CITY, PARCEL, BUILDING, FLOOR, UNIT)
+  // Camera Mode Navigation
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
 
-    // Clear existing orbit tick listener if active
     if (orbitListenerRef.current) {
       viewer.clock.onTick.removeEventListener(orbitListenerRef.current);
       orbitListenerRef.current = null;
@@ -795,14 +801,13 @@ export const CesiumViewer: React.FC = () => {
 
       if (cameraMode === 'ORBIT') {
         const rotateCallback = () => {
-          viewer.camera.rotate(Cesium.Cartesian3.UNIT_Z, -0.004);
+          viewer.camera.rotate(Cesium.Cartesian3.UNIT_Z, -0.003);
         };
         viewer.clock.onTick.addEventListener(rotateCallback);
         orbitListenerRef.current = rotateCallback;
       } else if (cameraMode === 'CITY') {
-        const center = activeJurisdiction?.center || [77.5925, 12.9725];
         viewer.camera.flyTo({
-          destination: Cesium.Cartesian3.fromDegrees(center[0], center[1], 1800),
+          destination: Cesium.Cartesian3.fromDegrees(77.62515, 12.9358, 1200),
           orientation: {
             heading: Cesium.Math.toRadians(35),
             pitch: Cesium.Math.toRadians(-30),
@@ -811,9 +816,8 @@ export const CesiumViewer: React.FC = () => {
           duration: 1.2
         });
       } else if (cameraMode === 'PARCEL') {
-        const center = activeJurisdiction?.center || [77.5925, 12.9725];
         viewer.camera.flyTo({
-          destination: Cesium.Cartesian3.fromDegrees(center[0], center[1], 600),
+          destination: Cesium.Cartesian3.fromDegrees(77.6248, 12.9356, 450),
           orientation: {
             heading: Cesium.Math.toRadians(45),
             pitch: Cesium.Math.toRadians(-35),
@@ -836,9 +840,9 @@ export const CesiumViewer: React.FC = () => {
         orbitListenerRef.current = null;
       }
     };
-  }, [cameraMode, activeJurisdiction, selectedEntity, flyToEntity]);
+  }, [cameraMode, selectedEntity, flyToEntity]);
 
-  // Measurement Tool Screen-Space Event Handler
+  // Measurement Tool
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
@@ -863,7 +867,6 @@ export const CesiumViewer: React.FC = () => {
       setMeasurePoints([...pts]);
 
       if (pts.length === 1) {
-        // First point picked
         const cart1 = Cesium.Cartographic.fromCartesian(pts[0]);
         setMeasureResult({
           distance: 0,
@@ -876,7 +879,6 @@ export const CesiumViewer: React.FC = () => {
           }
         });
 
-        // Add temporary polyline
         if (measureEntityRef.current) {
           viewer.entities.remove(measureEntityRef.current);
         }
@@ -890,14 +892,13 @@ export const CesiumViewer: React.FC = () => {
             depthFailMaterial: Cesium.Color.fromCssColorString('#38bdf8').withAlpha(0.5)
           },
           point: {
-            pixelSize: 8,
+            pixelSize: 7,
             color: Cesium.Color.fromCssColorString('#38bdf8'),
             outlineColor: Cesium.Color.WHITE,
             outlineWidth: 2
           }
         });
       } else if (pts.length === 2) {
-        // Second point picked - finalize measurement
         const cart1 = Cesium.Cartographic.fromCartesian(pts[0]);
         const cart2 = Cesium.Cartographic.fromCartesian(pts[1]);
         
@@ -921,22 +922,20 @@ export const CesiumViewer: React.FC = () => {
           }
         });
 
-        // Add midpoint badge
         const midpoint = Cesium.Cartesian3.midpoint(pts[0], pts[1], new Cesium.Cartesian3());
         viewer.entities.add({
           position: midpoint,
           label: {
             text: `Dist: ${euclidDist.toFixed(2)}m\nΔZ: ${dZ.toFixed(2)}m`,
-            font: '12px monospace',
+            font: '11px monospace',
             fillColor: Cesium.Color.WHITE,
-            backgroundColor: Cesium.Color.fromCssColorString('#0b0f19').withAlpha(0.85),
+            backgroundColor: Cesium.Color.fromCssColorString('#0b0f19').withAlpha(0.9),
             showBackground: true,
             verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
             pixelOffset: new Cesium.Cartesian2(0, -10)
           }
         });
 
-        // Reset points for subsequent measurement
         pts = [];
       }
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
@@ -961,13 +960,14 @@ export const CesiumViewer: React.FC = () => {
     }
   };
 
+  // FlyTo Controller for selection updates
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
 
     if (flyToTarget) {
       viewer.camera.flyTo({
-        destination: Cesium.Cartesian3.fromDegrees(flyToTarget[0], flyToTarget[1], 200),
+        destination: Cesium.Cartesian3.fromDegrees(flyToTarget[0], flyToTarget[1], 160),
         orientation: {
           heading: Cesium.Math.toRadians(35),
           pitch: Cesium.Math.toRadians(-28),
@@ -982,7 +982,7 @@ export const CesiumViewer: React.FC = () => {
       const entityId = selectedEntity.entity_id;
       const eType = selectedEntity.entity_type;
       
-      let mode: keyof typeof CAMERA_MODES = 'building';
+      let mode: CameraModeKey = 'building';
       if (eType === 'PARCEL') mode = 'parcel';
       else if (eType === 'BUILDING') mode = 'building';
       else if (eType === 'FLOOR') mode = 'floor';
@@ -993,48 +993,17 @@ export const CesiumViewer: React.FC = () => {
   }, [selectedEntity?.entity_id, selectedEntity?.entity_type, flyToTarget, flyToEntity]);
 
   return (
-    <div className="relative w-full h-full bg-[#0b0f19] overflow-hidden">
+    <div className="relative w-full h-full bg-[#070b14] overflow-hidden">
       <div ref={containerRef} className="w-full h-full" id="cesiumContainer" />
       
+      {/* Loading Indicator */}
       {loading3D && (
-        <div className="absolute top-16 right-4 px-4 py-2 rounded-lg bg-slate-900/95 border border-white/10 text-cyan-400 text-xs font-mono flex items-center space-x-2 z-10 shadow-xl pointer-events-none animate-in fade-in duration-200">
-          <svg className="w-4 h-4 animate-spin text-cyan-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <div className="absolute top-16 right-4 px-3.5 py-1.5 rounded-lg bg-slate-900/90 border border-white/10 text-cyan-400 text-xs font-mono flex items-center space-x-2 z-10 shadow-xl pointer-events-none animate-in fade-in duration-200">
+          <svg className="w-3.5 h-3.5 animate-spin text-cyan-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
           </svg>
-          <span>Rendering 3D Cadastre...</span>
-        </div>
-      )}
-
-      {selectedEntity && (
-        <div className="absolute bottom-20 left-4 right-4 flex justify-center pointer-events-none z-10">
-          <div className="px-4 py-2 rounded-lg bg-slate-900/95 border border-white/10 shadow-xl animate-in slide-in-from-bottom duration-300 pointer-events-auto">
-            <div className="flex items-center space-x-3 text-sm">
-              <div className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></div>
-              <span className="font-medium text-white">
-                {selectedEntity.entity_type}: {selectedEntity.entity_id}
-              </span>
-              {selectedEntity.floor_level && (
-                <span className="px-2 py-0.5 bg-blue-600/30 text-blue-300 rounded text-xs font-mono">
-                  Floor {selectedEntity.floor_level}
-                </span>
-              )}
-              {selectedEntity.unit_number && (
-                <span className="px-2 py-0.5 bg-purple-600/30 text-purple-300 rounded text-xs font-mono">
-                  {selectedEntity.unit_number}
-                </span>
-              )}
-              <span className="px-2 py-0.5 bg-emerald-600/30 text-emerald-300 rounded text-xs font-mono">
-                {selectedEntity.validation_status}
-              </span>
-              <button
-                onClick={() => setCurrentCameraMode('city')}
-                className="ml-2 px-2 py-1 text-[10px] text-slate-400 hover:text-white bg-slate-800 rounded transition"
-              >
-                City View
-              </button>
-            </div>
-          </div>
+          <span>Syncing 3D Cadastre...</span>
         </div>
       )}
 
@@ -1044,7 +1013,7 @@ export const CesiumViewer: React.FC = () => {
           <div className="flex items-center justify-between pb-2 mb-3 border-b border-white/10">
             <div className="flex items-center space-x-2">
               <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></span>
-              <span className="font-bold text-white uppercase tracking-wider">3D Measurement Tool</span>
+              <span className="font-bold text-white uppercase tracking-wider">3D Measurement</span>
             </div>
             <button
               onClick={() => setActiveTool('select')}
@@ -1055,7 +1024,7 @@ export const CesiumViewer: React.FC = () => {
           </div>
 
           <div className="text-[11px] text-slate-300 mb-3 leading-relaxed">
-            Click two points on the terrain, building facades, or roof structures to measure 3D spatial distance and vertical height differential.
+            Click two points on terrain or building facades to measure 3D spatial distance and vertical elevation differential.
           </div>
 
           <div className="space-y-2 bg-slate-900/60 p-2.5 rounded-lg border border-white/5 font-mono text-[11px]">
@@ -1093,7 +1062,7 @@ export const CesiumViewer: React.FC = () => {
         </div>
       )}
 
-      {/* Interactive Section / Clipping Plane HUD */}
+      {/* Interactive Section Plane HUD */}
       {activeTool === 'section' && (
         <div className="absolute top-20 left-4 p-4 rounded-xl bg-[#0d1321]/92 backdrop-blur-xl border border-blue-500/30 shadow-2xl z-20 w-72 text-xs animate-in fade-in duration-200">
           <div className="flex items-center justify-between pb-2 mb-3 border-b border-white/10">
@@ -1110,12 +1079,12 @@ export const CesiumViewer: React.FC = () => {
           </div>
 
           <div className="text-[11px] text-slate-300 mb-3 leading-relaxed">
-            Slice vertically across building volumes and subterranean structures to inspect interior cadastre slices and floor envelopes.
+            Slice vertically across building volumes to inspect interior cadastre storeys and unit envelopes.
           </div>
 
           <div className="space-y-2">
             <div className="flex justify-between items-center text-[11px]">
-              <span className="text-slate-400 font-medium">Cut Elevation Datum:</span>
+              <span className="text-slate-400 font-medium">Cut Datum:</span>
               <span className="font-mono text-cyan-400 font-bold">{sectionHeight} m</span>
             </div>
             <input
@@ -1135,54 +1104,6 @@ export const CesiumViewer: React.FC = () => {
           </div>
         </div>
       )}
-
-      {/* View Mode & Camera Preset Controls (Bottom Right) */}
-      <div className="absolute bottom-16 right-4 flex flex-col items-end space-y-2 z-10 pointer-events-none">
-        <div className="flex items-center space-x-2 pointer-events-auto">
-          <span className="text-[10px] text-slate-400 uppercase tracking-wider">View</span>
-          <button
-            onClick={() => setViewMode('reality')}
-            className={`px-2 py-1 rounded text-[10px] font-medium transition ${
-              viewMode === 'reality' 
-                ? 'bg-blue-600 text-white shadow-blue-600/30' 
-                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-            }`}
-          >
-            Reality
-          </button>
-          <button
-            onClick={() => setViewMode('analysis')}
-            className={`px-2 py-1 rounded text-[10px] font-medium transition ${
-              viewMode === 'analysis' 
-                ? 'bg-cyan-600 text-white shadow-cyan-600/30' 
-                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-            }`}
-          >
-            Analysis
-          </button>
-        </div>
-
-        <div className="flex flex-col space-y-1 pointer-events-auto">
-          {Object.entries(CAMERA_MODES).map(([key, mode]) => (
-            <button
-              key={key}
-              onClick={() => {
-                if (selectedEntity) {
-                  flyToEntity(selectedEntity.entity_id, key as keyof typeof CAMERA_MODES);
-                }
-              }}
-              disabled={!selectedEntity}
-              className={`px-2 py-1.5 rounded-l-lg text-[10px] font-medium transition w-32 text-left ${
-                currentCameraMode === key
-                  ? 'bg-cyan-600 text-white shadow-cyan-600/30'
-                  : 'bg-slate-800/90 text-slate-300 hover:bg-slate-700'
-              } ${!selectedEntity ? 'opacity-50 pointer-events-none' : ''}`}
-            >
-              {mode.name}
-            </button>
-          ))}
-        </div>
-      </div>
     </div>
   );
 };

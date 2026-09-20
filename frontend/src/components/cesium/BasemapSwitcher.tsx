@@ -11,65 +11,51 @@ interface BasemapOption {
 export const BasemapSwitcher: React.FC = () => {
   const { basemap, setBasemap, activeJurisdiction } = useCadastre();
 
-  const options: BasemapOption[] = [
+  const options: { id: BasemapMode; label: string; iconBg: string }[] = [
     {
       id: 'satellite',
       label: 'Satellite',
-      thumbnail: 'https://images.unsplash.com/photo-1524661135-423995f22d0b?auto=format&fit=crop&w=120&q=80'
+      iconBg: 'from-blue-900 via-slate-800 to-slate-950'
     },
     {
       id: 'streets',
       label: 'Streets',
-      thumbnail: 'https://images.unsplash.com/photo-1569336415962-a4bd9f69cd83?auto=format&fit=crop&w=120&q=80'
+      iconBg: 'from-slate-700 via-slate-800 to-slate-900'
     },
     {
       id: 'terrain',
       label: 'Terrain',
-      thumbnail: 'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?auto=format&fit=crop&w=120&q=80'
-    },
-    {
-      id: 'lidar',
-      label: 'LiDAR',
-      thumbnail: 'https://images.unsplash.com/photo-1509228468518-180dd4864904?auto=format&fit=crop&w=120&q=80'
+      iconBg: 'from-emerald-950 via-slate-900 to-slate-950'
     },
     {
       id: 'night',
-      label: 'Night',
-      thumbnail: 'https://images.unsplash.com/photo-1519501025264-65ba15a82390?auto=format&fit=crop&w=120&q=80'
+      label: 'Dark Canvas',
+      iconBg: 'from-cyan-950 via-slate-950 to-black'
     },
     {
       id: 'master_plan',
       label: 'Master Plan',
-      thumbnail: 'https://images.unsplash.com/photo-1503387762-592deb58ef4e?auto=format&fit=crop&w=120&q=80'
+      iconBg: 'from-indigo-950 via-slate-900 to-slate-950'
     }
   ];
 
   return (
     <div className="absolute bottom-4 left-4 right-4 flex items-end justify-between pointer-events-none z-20">
       {/* Basemap Switcher Floating Strip */}
-      <div className="flex items-center space-x-2 p-1.5 bg-[#0d1321]/90 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl pointer-events-auto select-none">
+      <div className="flex items-center space-x-1.5 p-1 bg-[#0d1321]/90 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl pointer-events-auto select-none">
         {options.map((opt) => {
           const isActive = basemap === opt.id;
           return (
             <button
               key={opt.id}
               onClick={() => setBasemap(opt.id)}
-              className={`group relative w-16 h-12 rounded-lg overflow-hidden border transition-all ${
-                isActive ? 'border-blue-500 shadow-md shadow-blue-500/40 ring-1 ring-blue-500' : 'border-white/10 opacity-70 hover:opacity-100'
+              className={`group relative px-2.5 py-1.5 rounded-lg border text-[11px] font-medium transition-all ${
+                isActive 
+                  ? 'bg-blue-600/30 border-blue-500 text-blue-300 shadow-md shadow-blue-500/20 font-semibold' 
+                  : 'bg-slate-900/60 border-white/5 text-slate-400 hover:text-slate-200 hover:bg-slate-800'
               }`}
             >
-              <img
-                src={opt.thumbnail}
-                alt={opt.label}
-                className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent flex items-end justify-center pb-1">
-                <span className={`text-[9px] font-semibold tracking-wider uppercase ${
-                  isActive ? 'text-blue-300' : 'text-slate-200'
-                }`}>
-                  {opt.label}
-                </span>
-              </div>
+              <span>{opt.label}</span>
             </button>
           );
         })}
