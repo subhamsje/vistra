@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { 
   ArrowRight, 
   MapPin, 
@@ -17,7 +17,10 @@ import {
   Activity,
   Globe2,
   FileCode,
-  ArrowUpRight
+  ArrowUpRight,
+  Eye,
+  Radio,
+  FileSpreadsheet
 } from 'lucide-react';
 import { ProjectRecord } from '../../types/cadastre';
 import { cadastreApi } from '../../services/api';
@@ -41,11 +44,87 @@ export const LandingPageView: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
   
   // Interactive 3D Scene Controls on Landing
-  const [explodeFactor, setExplodeFactor] = useState<number>(0.0);
+  const [manualExplode, setManualExplode] = useState<number>(0.0);
   const [selectedEntityId, setSelectedEntityId] = useState<string>('');
   const [hoveredEntityId, setHoveredEntityId] = useState<string | null>(null);
   const [activeLayer, setActiveLayer] = useState<'all' | 'parcels' | 'buildings' | 'units'>('all');
   const [showGCPs, setShowGCPs] = useState<boolean>(true);
+
+  // Scroll Progress and Reveal States
+  const [scrollProgress, setScrollProgress] = useState<number>(0);
+  const [heroScrollFactor, setHeroScrollFactor] = useState<number>(0);
+  const [transformationProgress, setTransformationProgress] = useState<number>(0);
+  const [fusionProgress, setFusionProgress] = useState<number>(0);
+  const [activeCadastralNode, setActiveCadastralNode] = useState<number>(0);
+
+  // Section Refs for Scroll Observation
+  const transformSectionRef = useRef<HTMLDivElement>(null);
+  const fusionSectionRef = useRef<HTMLDivElement>(null);
+  const identitySectionRef = useRef<HTMLDivElement>(null);
+  const projectsSectionRef = useRef<HTMLDivElement>(null);
+
+  // Respect prefers-reduced-motion
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState<boolean>(false);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    setPrefersReducedMotion(mediaQuery.matches);
+    const handleChange = () => setPrefersReducedMotion(mediaQuery.matches);
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, []);
+
+  // Scroll listener for 60fps transform linking
+  useEffect(() => {
+    let ticking = false;
+
+    const handleScroll = () => {
+      if (!ticking) {
+        window.requestAnimationFrame(() => {
+          const scrollY = window.scrollY;
+          const totalHeight = document.documentElement.scrollHeight - window.innerHeight;
+          const progress = totalHeight > 0 ? Math.min(1, Math.max(0, scrollY / totalHeight)) : 0;
+          setScrollProgress(progress);
+
+          // Hero camera push calculation (0 to 600px scroll)
+          const heroP = Math.min(1, Math.max(0, scrollY / 550));
+          setHeroScrollFactor(heroP);
+
+          // 2D -> 3D Transformation section progress
+          if (transformSectionRef.current) {
+            const rect = transformSectionRef.current.getBoundingClientRect();
+            const viewH = window.innerHeight;
+            // 0 when section top enters bottom, 1 when section center is reached
+            const p = Math.min(1, Math.max(0, (viewH - rect.top) / (viewH + rect.height * 0.5)));
+            setTransformationProgress(p);
+          }
+
+          // Data Fusion section progress
+          if (fusionSectionRef.current) {
+            const rect = fusionSectionRef.current.getBoundingClientRect();
+            const viewH = window.innerHeight;
+            const p = Math.min(1, Math.max(0, (viewH - rect.top) / (viewH + rect.height * 0.6)));
+            setFusionProgress(p);
+          }
+
+          // Cadastral Identity Node step based on scroll
+          if (identitySectionRef.current) {
+            const rect = identitySectionRef.current.getBoundingClientRect();
+            const viewH = window.innerHeight;
+            const p = Math.min(1, Math.max(0, (viewH - rect.top) / (viewH + rect.height * 0.8)));
+            const step = Math.min(4, Math.floor(p * 5));
+            setActiveCadastralNode(step);
+          }
+
+          ticking = false;
+        });
+        ticking = true;
+      }
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
 
   // Load real project data from backend
   useEffect(() => {
@@ -58,11 +137,9 @@ export const LandingPageView: React.FC = () => {
           const defaultProj = projectList[0];
           setActiveProject(defaultProj);
           
-          // Fetch the actual 3D GeoJSON for this project
           const geojson = await cadastreApi.getCesiumGeoJSON(0.0, '', '', defaultProj.id);
           if (geojson && geojson.features) {
             setFeatures(geojson.features);
-            // Default select a real unit
             const sampleUnit = geojson.features.find((f: any) => f.properties?.entity_type === 'UNIT');
             if (sampleUnit) {
               setSelectedEntityId(sampleUnit.id);
@@ -78,12 +155,18 @@ export const LandingPageView: React.FC = () => {
     loadData();
   }, []);
 
+  // Effective explode factor combines manual slider + subtle scroll influence
+  const effectiveExplode = useMemo(() => {
+    if (manualExplode > 0) return manualExplode;
+    return prefersReducedMotion ? 0 : Math.min(1.2, heroScrollFactor * 1.0);
+  }, [manualExplode, heroScrollFactor, prefersReducedMotion]);
+
   // Update GeoJSON when explosion changes
   useEffect(() => {
     if (!activeProject) return;
     const updateExplosion = async () => {
       try {
-        const geojson = await cadastreApi.getCesiumGeoJSON(explodeFactor, '', selectedEntityId, activeProject.id);
+        const geojson = await cadastreApi.getCesiumGeoJSON(effectiveExplode, '', selectedEntityId, activeProject.id);
         if (geojson && geojson.features) {
           setFeatures(geojson.features);
         }
@@ -92,14 +175,14 @@ export const LandingPageView: React.FC = () => {
       }
     };
     updateExplosion();
-  }, [explodeFactor, activeProject, selectedEntityId]);
+  }, [effectiveExplode, activeProject, selectedEntityId]);
 
   // Handle switching project in the landing interactive scene
   const handleSwitchProject = async (projId: string) => {
     const p = projects.find(item => item.id === projId);
     if (!p) return;
     setActiveProject(p);
-    setExplodeFactor(0.0);
+    setManualExplode(0.0);
     try {
       const geojson = await cadastreApi.getCesiumGeoJSON(0.0, '', '', p.id);
       if (geojson && geojson.features) {
@@ -114,7 +197,7 @@ export const LandingPageView: React.FC = () => {
     }
   };
 
-  // Projection Mathematics for Precision 3D Cadastral Isometric Space
+  // Projection Mathematics for Precision 3D Cadastral Isometric Space with Scroll Camera Push
   const { originLon, originLat, scaleX, scaleY } = useMemo(() => {
     if (features && features.length > 0) {
       let minLon = Infinity, maxLon = -Infinity;
@@ -136,21 +219,26 @@ export const LandingPageView: React.FC = () => {
         const sX = 390 / dLon;
         const sY = 390 / dLat;
         const uniformScale = Math.min(sX, sY * 1.12);
+        
+        // Subtle scroll push zoom (+8% scale on scroll down)
+        const zoomMult = prefersReducedMotion ? 1.0 : 1.0 + heroScrollFactor * 0.08;
+
         return {
           originLon: cLon,
           originLat: cLat,
-          scaleX: uniformScale,
-          scaleY: uniformScale * 1.1
+          scaleX: uniformScale * zoomMult,
+          scaleY: uniformScale * 1.1 * zoomMult
         };
       }
     }
     const cLon = activeProject?.center?.[0] || 77.6250;
     const cLat = activeProject?.center?.[1] || 12.9355;
     return { originLon: cLon, originLat: cLat, scaleX: 340000, scaleY: 380000 };
-  }, [features, activeProject]);
+  }, [features, activeProject, heroScrollFactor, prefersReducedMotion]);
 
-  const CANVAS_CX = 340;
-  const CANVAS_CY = 270;
+  // Dynamic canvas center with subtle camera shift
+  const CANVAS_CX = 340 + (prefersReducedMotion ? 0 : (heroScrollFactor * 12));
+  const CANVAS_CY = 270 - (prefersReducedMotion ? 0 : (heroScrollFactor * 8));
   const SCALE_Z = 9.5; // pixel per vertical meter
 
   const projectToScreen = useCallback((lon: number, lat: number, z_m: number = 0) => {
@@ -161,7 +249,7 @@ export const LandingPageView: React.FC = () => {
     const screenX = CANVAS_CX + (dx * cos30) - (dy * cos30);
     const screenY = CANVAS_CY - (dx * sin30) - (dy * sin30) - (z_m * SCALE_Z);
     return { x: screenX, y: screenY };
-  }, [originLon, originLat, scaleX, scaleY]);
+  }, [originLon, originLat, scaleX, scaleY, CANVAS_CX, CANVAS_CY]);
 
   const polygonToSvgPath = useCallback((coords: any[], z_m: number = 0) => {
     if (!coords || coords.length === 0) return '';
@@ -211,7 +299,7 @@ export const LandingPageView: React.FC = () => {
         onClick={() => setSelectedEntityId(entityId)}
         onMouseEnter={() => setHoveredEntityId(entityId)}
         onMouseLeave={() => setHoveredEntityId(null)}
-        className="cursor-pointer transition-all"
+        className="cursor-pointer transition-all duration-150"
       >
         <title>{title}</title>
         {sideWalls.map((pathStr, sIdx) => (
@@ -264,6 +352,18 @@ export const LandingPageView: React.FC = () => {
   const buildingFeatures = features.filter(f => f.properties.entity_type === 'BUILDING');
   const unitFeatures = features.filter(f => f.properties.entity_type === 'UNIT' || f.properties.entity_type === 'UNDERGROUND');
 
+  // Interactive step cards for 2D -> 3D transformation
+  const extrusionHeight = useMemo(() => {
+    if (prefersReducedMotion) return 18.0;
+    // 0m to 18m mapped to scroll progress inside transformation section
+    return Math.max(0.4, transformationProgress * 18.0);
+  }, [transformationProgress, prefersReducedMotion]);
+
+  const activeFloorCount = useMemo(() => {
+    if (prefersReducedMotion) return 6;
+    return Math.min(6, Math.max(1, Math.floor(transformationProgress * 7)));
+  }, [transformationProgress, prefersReducedMotion]);
+
   const handleLaunchWorkspace = (projectId?: string) => {
     const target = projectId || activeProject?.id || 'blr_koramangala';
     setActiveProjectById(target);
@@ -272,6 +372,12 @@ export const LandingPageView: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-white text-slate-900 font-sans select-none antialiased flex flex-col">
+      {/* Scroll Progress Bar (Top Fixed Indicator) */}
+      <div 
+        className="fixed top-0 left-0 h-0.5 bg-blue-600 z-50 transition-all duration-75"
+        style={{ width: `${scrollProgress * 100}%` }}
+      />
+
       {/* 1. Institutional Cartographic Navigation Bar */}
       <header className="h-14 px-6 lg:px-12 border-b border-slate-200 bg-white/95 backdrop-blur-md flex items-center justify-between sticky top-0 z-40">
         <div className="flex items-center space-x-6">
@@ -293,8 +399,9 @@ export const LandingPageView: React.FC = () => {
           <nav className="hidden md:flex items-center space-x-5 text-xs text-slate-600 font-medium">
             <button onClick={() => navigateTo('/projects')} className="hover:text-slate-900 transition">Projects</button>
             <a href="#hero-viewer" className="hover:text-slate-900 transition">3D Cadastre</a>
-            <a href="#methodology" className="hover:text-slate-900 transition">Methodology</a>
-            <a href="#modalities" className="hover:text-slate-900 transition">Data</a>
+            <a href="#transformation" className="hover:text-slate-900 transition">Transformation</a>
+            <a href="#fusion" className="hover:text-slate-900 transition">Data Fusion</a>
+            <a href="#identity" className="hover:text-slate-900 transition">Cadastral Identity</a>
             <a href="#standards" className="hover:text-slate-900 transition">Standards</a>
           </nav>
         </div>
@@ -347,7 +454,7 @@ export const LandingPageView: React.FC = () => {
                 </button>
 
                 <a
-                  href="#methodology"
+                  href="#transformation"
                   className="px-4 py-2.5 rounded bg-white hover:bg-slate-100 text-slate-700 text-xs font-semibold border border-slate-200 transition"
                 >
                   View Methodology
@@ -573,7 +680,7 @@ export const LandingPageView: React.FC = () => {
                 <div className="flex items-center space-x-2 shrink-0">
                   <Sliders className="w-3.5 h-3.5 text-blue-600" />
                   <span className="font-semibold text-slate-800 text-[11px]">Floor Explosion</span>
-                  <span className="font-mono text-blue-600 font-bold text-[11px]">{explodeFactor.toFixed(1)}x</span>
+                  <span className="font-mono text-blue-600 font-bold text-[11px]">{effectiveExplode.toFixed(1)}x</span>
                 </div>
 
                 <input
@@ -581,8 +688,8 @@ export const LandingPageView: React.FC = () => {
                   min="0"
                   max="3.0"
                   step="0.1"
-                  value={explodeFactor}
-                  onChange={(e) => setExplodeFactor(parseFloat(e.target.value))}
+                  value={effectiveExplode}
+                  onChange={(e) => setManualExplode(parseFloat(e.target.value))}
                   className="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-blue-600"
                 />
 
@@ -630,96 +737,288 @@ export const LandingPageView: React.FC = () => {
         </div>
       </section>
 
-      {/* 4. "How VISTRA Works" - Spatial Transformation Workflow */}
-      <section id="methodology" className="py-14 px-6 lg:px-12 border-b border-slate-200 bg-slate-50/40">
-        <div className="max-w-7xl mx-auto space-y-8">
-          <div>
-            <div className="text-[10px] font-mono uppercase tracking-wider text-blue-600 font-bold">Spatial Engineering Workflow</div>
-            <h2 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight mt-0.5">
-              Cadastral Transformation Methodology
-            </h2>
-            <p className="text-slate-500 text-xs mt-1 max-w-2xl">
-              Deterministic mathematical pipeline converting flat 2D land titles into watertight 3D property geometries.
-            </p>
+      {/* 4. SCROLL-LINKED SECTION: 2D -> 3D SPATIAL TRANSFORMATION */}
+      <section 
+        id="transformation" 
+        ref={transformSectionRef}
+        className="py-16 px-6 lg:px-12 border-b border-slate-200 bg-slate-50/40 relative"
+      >
+        <div className="max-w-7xl mx-auto space-y-10">
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+            <div>
+              <div className="text-[10px] font-mono uppercase tracking-wider text-blue-600 font-bold flex items-center space-x-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-600"></span>
+                <span>Scroll-Linked Extrusion & Slicing</span>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight mt-1">
+                2D Footprint to 3D Volumetric Slices
+              </h2>
+              <p className="text-slate-500 text-xs mt-0.5 max-w-xl">
+                As you scroll through this section, watch the flat parcel boundary gradually extrude into 3D building envelopes and segment into isolated floor slabs.
+              </p>
+            </div>
+
+            <div className="flex items-center space-x-3 text-xs font-mono bg-white p-2.5 rounded border border-slate-200 text-slate-600 self-start md:self-end shadow-2xs">
+              <div>
+                <span className="text-slate-400 text-[10px] block">Extrusion Height:</span>
+                <span className="font-bold text-slate-900">+{extrusionHeight.toFixed(1)}m</span>
+              </div>
+              <div className="h-6 w-px bg-slate-200"></div>
+              <div>
+                <span className="text-slate-400 text-[10px] block">Storeys Segmented:</span>
+                <span className="font-bold text-blue-600">{activeFloorCount} / 6</span>
+              </div>
+            </div>
           </div>
 
-          {/* Connected Step Cards Flow */}
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-3 relative">
-            <div className="p-4 rounded bg-white border border-slate-200 space-y-2">
-              <div className="flex items-center justify-between text-[11px] font-mono">
-                <span className="font-bold text-slate-400">01</span>
-                <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-100 text-slate-600">INPUT</span>
-              </div>
-              <h3 className="font-bold text-slate-900 text-xs">2D Parcel Boundary</h3>
-              <p className="text-[11px] text-slate-500 leading-normal">
-                Khasra/cadastral polygon georeferenced with GNSS ground control points.
-              </p>
-              <div className="text-[10px] font-mono text-slate-600 pt-1 border-t border-slate-100">
-                Format: GeoJSON / SHP
-              </div>
+          {/* Interactive Dynamic Transformation Canvas */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
+            {/* Left: Synchronized 3D Slicing SVG */}
+            <div className="lg:col-span-7 bg-white p-4 rounded-lg border border-slate-200 shadow-xs flex flex-col items-center justify-center min-h-[360px]">
+              <svg viewBox="0 0 520 380" className="w-full h-full max-h-[340px]">
+                <defs>
+                  <linearGradient id="extrudeGrad" x1="0" y1="1" x2="0" y2="0">
+                    <stop offset="0%" stopColor="#cbd5e1" stopOpacity="0.8" />
+                    <stop offset="100%" stopColor="#93c5fd" stopOpacity="0.9" />
+                  </linearGradient>
+                </defs>
+
+                {/* Grid */}
+                <g className="opacity-25">
+                  {Array.from({ length: 8 }).map((_, i) => (
+                    <line key={`tg_${i}`} x1={40 + i * 60} y1="30" x2={40 + i * 60} y2="350" stroke="#94a3b8" strokeWidth="0.75" strokeDasharray="2,4" />
+                  ))}
+                  {Array.from({ length: 7 }).map((_, i) => (
+                    <line key={`th_${i}`} x1="30" y1="40 + i * 45" x2="490" y2="40 + i * 45" stroke="#94a3b8" strokeWidth="0.75" strokeDasharray="2,4" />
+                  ))}
+                </g>
+
+                {/* 2D Ground Footprint */}
+                <polygon
+                  points="160,280 360,280 430,220 230,220"
+                  fill="#ecfdf5"
+                  stroke="#059669"
+                  strokeWidth="2"
+                  strokeDasharray="4,2"
+                />
+                <text x="175" y="270" fill="#047857" fontSize="9" fontWeight="700" fontFamily="sans-serif">
+                  2D PARCEL BOUNDARY (KHASRA 102/4A)
+                </text>
+
+                {/* Extruded Side Walls (Height linked to scroll) */}
+                {extrusionHeight > 0.5 && (
+                  <g className="transition-all duration-75">
+                    {/* Front Wall */}
+                    <polygon
+                      points={`160,280 360,280 360,${280 - extrusionHeight * 8} 160,${280 - extrusionHeight * 8}`}
+                      fill="url(#extrudeGrad)"
+                      stroke="#2563eb"
+                      strokeWidth="1.2"
+                    />
+                    {/* Right Wall */}
+                    <polygon
+                      points={`360,280 430,220 430,${220 - extrusionHeight * 8} 360,${280 - extrusionHeight * 8}`}
+                      fill="#60a5fa"
+                      fillOpacity="0.75"
+                      stroke="#1d4ed8"
+                      strokeWidth="1.2"
+                    />
+                    {/* Top Roof Slab */}
+                    <polygon
+                      points={`160,${280 - extrusionHeight * 8} 360,${280 - extrusionHeight * 8} 430,${220 - extrusionHeight * 8} 230,${220 - extrusionHeight * 8}`}
+                      fill="#3b82f6"
+                      fillOpacity="0.9"
+                      stroke="#1d4ed8"
+                      strokeWidth="1.5"
+                    />
+                  </g>
+                )}
+
+                {/* Sequential Floor Slab Slices */}
+                {Array.from({ length: activeFloorCount }).map((_, fIdx) => {
+                  const floorH = (fIdx + 1) * 2.8;
+                  if (floorH > extrusionHeight) return null;
+                  const slabY = 280 - floorH * 8;
+                  const rightY = 220 - floorH * 8;
+                  return (
+                    <g key={`slab_${fIdx}`} className="animate-in fade-in duration-200">
+                      <line x1="160" y1={slabY} x2="360" y2={slabY} stroke="#1e40af" strokeWidth="1.5" />
+                      <line x1="360" y1={slabY} x2="430" y2={rightY} stroke="#1e40af" strokeWidth="1.5" />
+                      <text x="130" y={slabY + 3} fill="#1e40af" fontSize="8" fontWeight="bold" fontFamily="monospace">
+                        F{fIdx + 1}
+                      </text>
+                    </g>
+                  );
+                })}
+              </svg>
             </div>
 
-            <div className="p-4 rounded bg-white border border-slate-200 space-y-2">
-              <div className="flex items-center justify-between text-[11px] font-mono">
-                <span className="font-bold text-slate-400">02</span>
-                <span className="text-[10px] px-1.5 py-0.2 rounded bg-blue-50 text-blue-700 font-medium">FUSION</span>
+            {/* Right: Technical Explanation Steps */}
+            <div className="lg:col-span-5 space-y-3">
+              <div className={`p-4 rounded border transition-all ${
+                transformationProgress < 0.3 ? 'bg-white border-blue-500 shadow-xs' : 'bg-slate-50/70 border-slate-200'
+              }`}>
+                <div className="flex items-center justify-between text-xs font-semibold text-slate-800">
+                  <span>1. 2D Survey Boundary Alignment</span>
+                  <span className="font-mono text-[10px] text-emerald-600">RMS &lt; 0.005m</span>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Khasra polygon corners snapped to centimeter GNSS ground control station pillars in EPSG:32643.
+                </p>
               </div>
-              <h3 className="font-bold text-slate-900 text-xs">3D Building Extrusion</h3>
-              <p className="text-[11px] text-slate-500 leading-normal">
-                LiDAR point-clouds and DEM terrain heights derive plinth and eave datum.
-              </p>
-              <div className="text-[10px] font-mono text-slate-600 pt-1 border-t border-slate-100">
-                LoD 1.2 / LoD 2 Solid
-              </div>
-            </div>
 
-            <div className="p-4 rounded bg-white border border-slate-200 space-y-2">
-              <div className="flex items-center justify-between text-[11px] font-mono">
-                <span className="font-bold text-slate-400">03</span>
-                <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-100 text-slate-600">SLICING</span>
+              <div className={`p-4 rounded border transition-all ${
+                transformationProgress >= 0.3 && transformationProgress < 0.7 ? 'bg-white border-blue-500 shadow-xs' : 'bg-slate-50/70 border-slate-200'
+              }`}>
+                <div className="flex items-center justify-between text-xs font-semibold text-slate-800">
+                  <span>2. LiDAR-Guided Vertical Extrusion</span>
+                  <span className="font-mono text-[10px] text-blue-600">LoD 1.2 Solid</span>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Aerial point cloud median returns determine ground plinth (+0.0m) and roof eave elevation (+18.0m).
+                </p>
               </div>
-              <h3 className="font-bold text-slate-900 text-xs">Floor Segmentation</h3>
-              <p className="text-[11px] text-slate-500 leading-normal">
-                Vector architectural plans aligned to vertical storey ceiling heights.
-              </p>
-              <div className="text-[10px] font-mono text-slate-600 pt-1 border-t border-slate-100">
-                Storey Slabs (ΔZ ~3.0m)
-              </div>
-            </div>
 
-            <div className="p-4 rounded bg-white border border-slate-200 space-y-2">
-              <div className="flex items-center justify-between text-[11px] font-mono">
-                <span className="font-bold text-slate-400">04</span>
-                <span className="text-[10px] px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700 font-medium">SOLID</span>
-              </div>
-              <h3 className="font-bold text-slate-900 text-xs">Property Volumes</h3>
-              <p className="text-[11px] text-slate-500 leading-normal">
-                Enclosed volumetric polyhedra with exact cubic volume calculations (m³).
-              </p>
-              <div className="text-[10px] font-mono text-slate-600 pt-1 border-t border-slate-100">
-                Watertight Multipolygons
-              </div>
-            </div>
-
-            <div className="p-4 rounded bg-white border border-blue-200 bg-blue-50/20 space-y-2">
-              <div className="flex items-center justify-between text-[11px] font-mono">
-                <span className="font-bold text-blue-600">05</span>
-                <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 font-semibold">VALIDATED</span>
-              </div>
-              <h3 className="font-bold text-slate-900 text-xs">Validated 3D ULPIN</h3>
-              <p className="text-[11px] text-slate-500 leading-normal">
-                ISO 19152 LADM compliant identifier with overlap zero-check & SHA-256 seal.
-              </p>
-              <div className="text-[10px] font-mono text-blue-700 font-semibold pt-1 border-t border-blue-100">
-                Deterministic Registry
+              <div className={`p-4 rounded border transition-all ${
+                transformationProgress >= 0.7 ? 'bg-white border-blue-500 shadow-xs' : 'bg-slate-50/70 border-slate-200'
+              }`}>
+                <div className="flex items-center justify-between text-xs font-semibold text-slate-800">
+                  <span>3. Floor Slicing & Private Volumes</span>
+                  <span className="font-mono text-[10px] text-indigo-600">ISO 19152 LADM</span>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Architectural floor plans partition each storey into watertight polyhedra with certified cubic volumes.
+                </p>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* 5. Projects Section: Real Database Records Only */}
-      <section id="projects" className="py-14 px-6 lg:px-12 border-b border-slate-200 bg-white">
+      {/* 5. SCROLL-LINKED SECTION: MULTI-MODAL EVIDENCE FUSION */}
+      <section 
+        id="fusion" 
+        ref={fusionSectionRef}
+        className="py-16 px-6 lg:px-12 border-b border-slate-200 bg-white relative"
+      >
+        <div className="max-w-7xl mx-auto space-y-8">
+          <div>
+            <div className="text-[10px] font-mono uppercase tracking-wider text-slate-500 font-bold">Multi-Modal Ingestion</div>
+            <h2 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight mt-1">
+              Geospatial Evidence Fusion
+            </h2>
+            <p className="text-slate-500 text-xs mt-0.5 max-w-xl">
+              Heterogeneous survey inputs progressively harmonized into an atomic 3D spatial database.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="p-4 rounded bg-slate-50 border border-slate-200 space-y-2 hover:border-blue-400 transition">
+              <div className="w-8 h-8 rounded bg-blue-100/80 text-blue-700 flex items-center justify-center text-xs">
+                <Globe2 className="w-4 h-4" />
+              </div>
+              <h3 className="font-bold text-xs text-slate-900">GIS Parcel Vectors</h3>
+              <p className="text-[11px] text-slate-500 leading-normal">
+                GeoJSON / SHP cadastral boundaries providing base 2D tenure extent.
+              </p>
+              <div className="text-[10px] font-mono text-slate-600 pt-1 border-t border-slate-200">
+                Format: GeoJSON (WGS84 / UTM)
+              </div>
+            </div>
+
+            <div className="p-4 rounded bg-slate-50 border border-slate-200 space-y-2 hover:border-blue-400 transition">
+              <div className="w-8 h-8 rounded bg-indigo-100/80 text-indigo-700 flex items-center justify-center text-xs">
+                <Layers className="w-4 h-4" />
+              </div>
+              <h3 className="font-bold text-xs text-slate-900">LiDAR Point Cloud</h3>
+              <p className="text-[11px] text-slate-500 leading-normal">
+                LAS/LAZ 1.4 point clouds classifying ground, roof eaves, and vertical heights.
+              </p>
+              <div className="text-[10px] font-mono text-slate-600 pt-1 border-t border-slate-200">
+                Density: ~120 pts/m²
+              </div>
+            </div>
+
+            <div className="p-4 rounded bg-slate-50 border border-slate-200 space-y-2 hover:border-blue-400 transition">
+              <div className="w-8 h-8 rounded bg-emerald-100/80 text-emerald-700 flex items-center justify-center text-xs">
+                <FileCode className="w-4 h-4" />
+              </div>
+              <h3 className="font-bold text-xs text-slate-900">Architectural Floor Plans</h3>
+              <p className="text-[11px] text-slate-500 leading-normal">
+                Vector PDFs georeferenced and extruded into internal unit boundaries.
+              </p>
+              <div className="text-[10px] font-mono text-slate-600 pt-1 border-t border-slate-200">
+                Format: Vector PDF / DXF
+              </div>
+            </div>
+
+            <div className="p-4 rounded bg-slate-50 border border-slate-200 space-y-2 hover:border-blue-400 transition">
+              <div className="w-8 h-8 rounded bg-amber-100/80 text-amber-700 flex items-center justify-center text-xs">
+                <Compass className="w-4 h-4" />
+              </div>
+              <h3 className="font-bold text-xs text-slate-900">DEM Elevation & GNSS</h3>
+              <p className="text-[11px] text-slate-500 leading-normal">
+                GeoTIFF terrain models and CORS ground control point CSV coordinates.
+              </p>
+              <div className="text-[10px] font-mono text-slate-600 pt-1 border-t border-slate-200">
+                Accuracy: Sub-centimeter
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* 6. SCROLL-LINKED SECTION: CADASTRAL IDENTITY & 3D ULPIN */}
+      <section 
+        id="identity" 
+        ref={identitySectionRef}
+        className="py-16 px-6 lg:px-12 border-b border-slate-200 bg-slate-50/50 relative"
+      >
+        <div className="max-w-7xl mx-auto space-y-8">
+          <div>
+            <div className="text-[10px] font-mono uppercase tracking-wider text-blue-600 font-bold">LADM Hierarchical Identity</div>
+            <h2 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight mt-1">
+              Deterministic 3D Cadastral Hierarchy
+            </h2>
+            <p className="text-slate-500 text-xs mt-0.5 max-w-xl">
+              Traceable parent-child relationships linking ground parcels to individual volumetric apartments.
+            </p>
+          </div>
+
+          {/* Connected Hierarchy Line Visualization */}
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+            {[
+              { level: 'PARCEL', title: '2D Ground Parcel', code: 'PARCEL_102_4A', desc: 'Base georeferenced land parcel record' },
+              { level: 'BUILDING', title: 'Building Solid', code: 'BLDG_ALPHA', desc: 'Extruded footprint with plinth & eave limits' },
+              { level: 'FLOOR', title: 'Storey Level', code: 'FLOOR_03', desc: 'Horizontal datum slice at +9.0m AMSL' },
+              { level: 'UNIT', title: 'Property Volume', code: 'UNIT_302', desc: 'Watertight apartment volume (180.4 m³)' },
+              { level: 'ULPIN', title: 'Validated 3D ULPIN', code: 'KA-BLR-004-102-4A-302-3D', desc: 'Cryptographically sealed 14-digit national ID' }
+            ].map((node, idx) => (
+              <div 
+                key={node.level}
+                className={`p-4 rounded border transition-all ${
+                  activeCadastralNode === idx ? 'bg-white border-blue-600 shadow-xs' : 'bg-slate-50 border-slate-200'
+                }`}
+              >
+                <div className="flex items-center justify-between text-[10px] font-mono font-bold">
+                  <span className={activeCadastralNode === idx ? 'text-blue-600' : 'text-slate-400'}>0{idx + 1}</span>
+                  <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-600">{node.level}</span>
+                </div>
+                <h3 className="font-bold text-slate-900 text-xs mt-2">{node.title}</h3>
+                <div className="font-mono text-[10px] text-blue-700 font-semibold mt-1 truncate">{node.code}</div>
+                <p className="text-[11px] text-slate-500 mt-1 leading-normal">{node.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* 7. Projects Section: Real Database Records Only */}
+      <section 
+        id="projects" 
+        ref={projectsSectionRef}
+        className="py-14 px-6 lg:px-12 border-b border-slate-200 bg-white"
+      >
         <div className="max-w-7xl mx-auto space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
             <div>
@@ -799,8 +1098,43 @@ export const LandingPageView: React.FC = () => {
         </div>
       </section>
 
-      {/* 6. Standards Compliance Strip */}
-      <section id="standards" className="py-8 px-6 lg:px-12 bg-white border-b border-slate-200 text-xs">
+      {/* 8. FINAL GEOSPATIAL CTA: Smooth Transition Into Workspace */}
+      <section className="py-14 px-6 lg:px-12 bg-slate-900 text-white border-b border-slate-800">
+        <div className="max-w-4xl mx-auto text-center space-y-6">
+          <div className="inline-flex items-center space-x-2 text-[11px] font-mono text-slate-400 bg-slate-800 px-3 py-1 rounded">
+            <Radio className="w-3 h-3 text-emerald-400" />
+            <span>Interactive 3D Cadastral Session Ready</span>
+          </div>
+
+          <h2 className="text-2xl sm:text-3xl font-bold tracking-tight">
+            Launch the 3D Cadastral Intelligence Workspace
+          </h2>
+
+          <p className="text-slate-400 text-xs sm:text-sm max-w-xl mx-auto leading-relaxed">
+            Inspect individual private property volumes, perform 3D Euclidean vertex measurements, cut horizontal section planes, and audit cryptographic hash seals.
+          </p>
+
+          <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
+            <button
+              onClick={() => handleLaunchWorkspace()}
+              className="px-6 py-3 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition flex items-center space-x-2 shadow-sm"
+            >
+              <span>Enter 3D Workspace</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+
+            <button
+              onClick={() => navigateTo('/projects')}
+              className="px-5 py-3 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium border border-slate-700 transition"
+            >
+              Browse All Jurisdictions
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* 9. Standards Compliance Strip */}
+      <section id="standards" className="py-6 px-6 lg:px-12 bg-white border-b border-slate-200 text-xs">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center space-x-2 text-slate-700 font-semibold">
             <ShieldCheck className="w-4 h-4 text-blue-600" />
@@ -816,8 +1150,8 @@ export const LandingPageView: React.FC = () => {
         </div>
       </section>
 
-      {/* 7. Institutional Footer */}
-      <footer className="bg-slate-900 text-slate-400 py-10 px-6 lg:px-12 text-xs mt-auto">
+      {/* 10. Institutional Footer */}
+      <footer className="bg-slate-950 text-slate-400 py-8 px-6 lg:px-12 text-xs mt-auto">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6">
           <div className="flex items-center space-x-3">
             <div className="w-6 h-6 rounded bg-white text-slate-950 font-bold flex items-center justify-center text-xs">
