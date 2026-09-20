@@ -646,29 +646,54 @@ export const PropertyDetailsPanel: React.FC = () => {
       </div>
 
       {/* Action Buttons Footer */}
-      <div className="p-4 border-t border-white/10 flex items-center space-x-2 bg-slate-950/40">
-        <button
-          onClick={handleFlyTo}
-          className="flex-1 py-2 px-3 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold flex items-center justify-center space-x-1.5 border border-white/10 transition shadow"
-        >
-          <Send className="w-3.5 h-3.5 text-blue-400" />
-          <span>Fly to</span>
-        </button>
+      <div className="p-3 border-t border-white/10 flex flex-col space-y-2 bg-slate-950/40">
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={handleFlyTo}
+            className="flex-1 py-2 px-3 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold flex items-center justify-center space-x-1.5 border border-white/10 transition shadow"
+          >
+            <Send className="w-3.5 h-3.5 text-blue-400" />
+            <span>Fly to</span>
+          </button>
 
-        <button
-          onClick={() => setActiveView('ulpin_registry')}
-          className="flex-1 py-2 px-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold flex items-center justify-center space-x-1.5 transition shadow shadow-blue-600/30"
-        >
-          <ExternalLink className="w-3.5 h-3.5" />
-          <span>View in Registry</span>
-        </button>
+          <button
+            onClick={() => setActiveView('ulpin_registry')}
+            className="flex-1 py-2 px-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold flex items-center justify-center space-x-1.5 transition shadow shadow-blue-600/30"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            <span>View Registry</span>
+          </button>
 
-        <button 
-          onClick={() => alert(`SHA-256 Provenance Seal:\n${selectedEntity.audit_hash}`)}
-          className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white border border-white/10 transition"
-          title="Inspect SHA-256 Cryptographic Audit Seal"
+          <button 
+            onClick={() => alert(`SHA-256 Provenance Seal:\n${selectedEntity.audit_hash}`)}
+            className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white border border-white/10 transition"
+            title="Inspect SHA-256 Cryptographic Audit Seal"
+          >
+            <ShieldCheck className="w-4 h-4 text-cyan-400" />
+          </button>
+        </div>
+
+        {/* Dedicated Human Review Submission */}
+        <button
+          onClick={async () => {
+            try {
+              await cadastreApi.submitGovernanceDecision({
+                entity_id: selectedEntity.entity_id,
+                ulpin_3d: selectedEntity.ulpin_3d,
+                action: 'FLAGGED_FOR_HUMAN_REVIEW',
+                reviewer: 'Ananya Rao',
+                notes: 'Manual adjudication requested from 3D Inspector'
+              });
+              alert(`Successfully routed ${selectedEntity.ulpin_3d} to Governance Review Queue.`);
+              setActiveView('review_queue');
+            } catch (e) {
+              setActiveView('review_queue');
+            }
+          }}
+          className="w-full py-2 px-3 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-lg text-xs font-semibold flex items-center justify-center space-x-2 transition"
         >
-          <ShieldCheck className="w-4 h-4 text-cyan-400" />
+          <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+          <span>Send for Human Review</span>
         </button>
       </div>
     </aside>

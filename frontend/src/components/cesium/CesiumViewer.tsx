@@ -84,6 +84,8 @@ export const CesiumViewer: React.FC = () => {
     basemap, 
     selectedEntity,
     setSelectedEntityId,
+    selectedBuildingId,
+    setSelectedBuildingId,
     activeJurisdiction,
     flyToTarget,
     setFlyToTarget,
@@ -248,6 +250,7 @@ export const CesiumViewer: React.FC = () => {
 
     viewer.scene.globe.depthTestAgainstTerrain = true;
     viewer.scene.globe.enableLighting = true;
+    viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString('#0b0f19');
     viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#0b0f19');
     viewer.scene.sun.show = true;
     viewer.scene.moon.show = false;
@@ -437,7 +440,11 @@ export const CesiumViewer: React.FC = () => {
     } else if (eType === 'FLOOR') {
       entity.polygon.height = props.local_base_m?.getValue() || 0;
       entity.polygon.extrudedHeight = props.local_roof_m?.getValue() || 3;
-      entity.polygon.material = Cesium.Color.fromCssColorString(colors.fill).withAlpha(isFloorSelected ? 0.95 : 0.7 * baseAlpha);
+      
+      const floorPalettes = ['#eab308', '#10b981', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
+      const floorColor = floorPalettes[Math.abs(flLvl) % floorPalettes.length];
+
+      entity.polygon.material = Cesium.Color.fromCssColorString(floorColor).withAlpha(isFloorSelected ? 0.95 : 0.65 * baseAlpha);
       entity.polygon.outline = true;
       entity.polygon.outlineColor = isFloorSelected
         ? Cesium.Color.fromCssColorString('#38bdf8').withAlpha(1.0)
@@ -455,18 +462,21 @@ export const CesiumViewer: React.FC = () => {
       entity.polygon.height = props.local_base_m?.getValue() || 0;
       entity.polygon.extrudedHeight = props.local_roof_m?.getValue() || 3;
       
+      const floorPalettes = ['#eab308', '#10b981', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
+      const unitBaseColor = floorPalettes[Math.abs(flLvl) % floorPalettes.length];
+
       if (isSelected) {
-        entity.polygon.material = Cesium.Color.fromCssColorString(colors.fill).withAlpha(1.0);
+        entity.polygon.material = Cesium.Color.fromCssColorString('#38bdf8').withAlpha(0.95);
         entity.polygon.outline = true;
-        entity.polygon.outlineColor = Cesium.Color.fromCssColorString('#38bdf8').withAlpha(1.0);
+        entity.polygon.outlineColor = Cesium.Color.WHITE.withAlpha(1.0);
         entity.polygon.outlineWidth = 4;
       } else if (isFloorSelected) {
-        entity.polygon.material = Cesium.Color.fromCssColorString(colors.fill).withAlpha(0.85);
+        entity.polygon.material = Cesium.Color.fromCssColorString(unitBaseColor).withAlpha(0.85);
         entity.polygon.outline = true;
-        entity.polygon.outlineColor = Cesium.Color.WHITE.withAlpha(0.7);
+        entity.polygon.outlineColor = Cesium.Color.WHITE.withAlpha(0.8);
         entity.polygon.outlineWidth = 2;
       } else {
-        entity.polygon.material = Cesium.Color.fromCssColorString(colors.fill).withAlpha(0.55 * baseAlpha);
+        entity.polygon.material = Cesium.Color.fromCssColorString(unitBaseColor).withAlpha(0.55 * baseAlpha);
         entity.polygon.outline = true;
         entity.polygon.outlineColor = Cesium.Color.WHITE.withAlpha(0.4);
         entity.polygon.outlineWidth = 1;
@@ -511,7 +521,9 @@ export const CesiumViewer: React.FC = () => {
           validationSourceRef.current = null;
         }
 
-        const geojson = await cadastreApi.getCesiumGeoJSON(explodeFactor);
+        const bId = selectedBuildingId || selectedEntity?.building_id || 'B12';
+        const sId = selectedEntity?.entity_id || '';
+        const geojson = await cadastreApi.getCesiumGeoJSON(explodeFactor, bId, sId);
         const ds = await Cesium.GeoJsonDataSource.load(geojson, { clampToGround: false });
 
         const baseAlpha = Math.max(0.1, (100 - buildingTransparency) / 100);
@@ -568,7 +580,7 @@ export const CesiumViewer: React.FC = () => {
     };
 
     load3DData();
-  }, [explodeFactor, buildingTransparency, selectedEntity?.entity_id, selectedEntity?.floor_level, 
+  }, [explodeFactor, selectedBuildingId, buildingTransparency, selectedEntity?.entity_id, selectedEntity?.floor_level, 
       layers.parcelBoundaries, layers.buildings3d, layers.floorsUnits, layers.underground, layers.validation,
       applyEntityStyling]);
 

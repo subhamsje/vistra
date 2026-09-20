@@ -27,6 +27,8 @@ interface CadastreContextType {
   setIsPropertyPanelOpen: (open: boolean) => void;
   isPropertyPanelMinimized: boolean;
   setIsPropertyPanelMinimized: (minimized: boolean) => void;
+  isPipelineDockMinimized: boolean;
+  setIsPipelineDockMinimized: (minimized: boolean) => void;
   viewMode: CadastralViewMode;
   setViewMode: (mode: CadastralViewMode) => void;
   cameraMode: CameraViewMode;
@@ -76,7 +78,7 @@ const defaultLayers: LayerVisibilityState = {
   parcelBoundaries: true,
   buildings3d: true,
   floorsUnits: true,
-  underground: true,
+  underground: false,
   roads: true,
   utilities: false,
   lidarPointCloud: false,
@@ -92,6 +94,7 @@ export const CadastreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [selectedBuildingId, setSelectedBuildingId] = useState<string>('B12');
   const [isPropertyPanelOpen, setIsPropertyPanelOpen] = useState<boolean>(false);
   const [isPropertyPanelMinimized, setIsPropertyPanelMinimized] = useState<boolean>(false);
+  const [isPipelineDockMinimized, setIsPipelineDockMinimized] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<CadastralViewMode>('REALITY');
   const [cameraMode, setCameraMode] = useState<CameraViewMode>('CITY');
   const [jurisdictions, setJurisdictions] = useState<Jurisdiction[]>([]);
@@ -188,6 +191,8 @@ export const CadastreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setIsPropertyPanelOpen,
         isPropertyPanelMinimized,
         setIsPropertyPanelMinimized,
+        isPipelineDockMinimized,
+        setIsPipelineDockMinimized,
         viewMode,
         setViewMode,
         cameraMode,
