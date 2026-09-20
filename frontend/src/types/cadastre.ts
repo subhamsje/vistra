@@ -138,6 +138,7 @@ export interface LayerVisibilityState {
   utilities: boolean;
   lidarPointCloud: boolean;
   demDsm: boolean;
+  validation: boolean;
 }
 
 export type BasemapMode = 'satellite' | 'streets' | 'terrain' | 'lidar' | 'night' | 'master_plan';

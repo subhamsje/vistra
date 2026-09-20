@@ -51,6 +51,7 @@ interface CadastreContextType {
   isCommandPaletteOpen: boolean;
   setIsCommandPaletteOpen: (open: boolean) => void;
   flyToTarget: [number, number] | null;
+  setFlyToTarget: (coords: [number, number] | null) => void;
   triggerFlyTo: (coords: [number, number]) => void;
   refreshData: () => Promise<void>;
   validationIssues: ValidationIssue[];
@@ -79,7 +80,8 @@ const defaultLayers: LayerVisibilityState = {
   roads: true,
   utilities: false,
   lidarPointCloud: false,
-  demDsm: false
+  demDsm: false,
+  validation: true
 };
 
 const CadastreContext = createContext<CadastreContextType | undefined>(undefined);
@@ -210,6 +212,7 @@ export const CadastreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         isCommandPaletteOpen,
         setIsCommandPaletteOpen,
         flyToTarget,
+        setFlyToTarget,
         triggerFlyTo,
         refreshData: loadInitialData,
         validationIssues,

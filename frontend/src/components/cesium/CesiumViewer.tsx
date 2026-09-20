@@ -17,7 +17,9 @@ interface CameraMode {
   rangeFactor: number;
 }
 
-const CAMERA_MODES: Record<string, CameraMode> = {
+type CameraModeKey = 'city' | 'parcel' | 'building' | 'floor' | 'unit';
+
+const CAMERA_MODES: Record<CameraModeKey, CameraMode> = {
   city: { name: 'CITY VIEW', heading: 35, pitch: -28, rangeFactor: 1.0 },
   parcel: { name: 'PARCEL VIEW', heading: 45, pitch: -35, rangeFactor: 0.5 },
   building: { name: 'BUILDING VIEW', heading: 35, pitch: -30, rangeFactor: 0.3 },
@@ -49,7 +51,31 @@ export const CesiumViewer: React.FC = () => {
   const [loading3D, setLoading3D] = useState(true);
   const [currentCameraMode, setCurrentCameraMode] = useState<'city' | 'parcel' | 'building' | 'floor' | 'unit'>('city');
   const [viewMode, setViewMode] = useState<'reality' | 'analysis'>('reality');
-  const [entityBoundingBoxes, setEntityBoundingBoxes] = useRef<Map<string, BoundingBox>>(new Map());
+  const entityBoundingBoxes = useRef<Map<string, BoundingBox>>(new Map());
+
+  // Measurement tool state
+  const [measureType, setMeasureType] = useState<'distance' | 'height'>('distance');
+  const [measurePoints, setMeasurePoints] = useState<any[]>([]);
+  const [measureResult, setMeasureResult] = useState<{
+    distance: number;
+    deltaZ: number;
+    horizDist: number;
+    p1?: { lon: number; lat: number; height: number };
+    p2?: { lon: number; lat: number; height: number };
+  } | null>(null);
+  const measureHandlerRef = useRef<any>(null);
+  const measureEntityRef = useRef<any>(null);
+
+  // Section clipping plane state
+  const [sectionHeight, setSectionHeight] = useState<number>(30); // 0 to 60 meters elevation
+  const [sectionPlaneActive, setSectionPlaneActive] = useState<boolean>(false);
+
+  // Point Cloud Primitive Collection Ref
+  const pointCloudPrimitivesRef = useRef<any>(null);
+  // DEM Grid Primitive Collection Ref
+  const demPrimitivesRef = useRef<any>(null);
+  // Orbit listener removal ref
+  const orbitListenerRef = useRef<any>(null);
 
   const { 
     layers, 
@@ -61,7 +87,11 @@ export const CesiumViewer: React.FC = () => {
     activeJurisdiction,
     flyToTarget,
     setFlyToTarget,
-    activeView
+    activeView,
+    activeTool,
+    setActiveTool,
+    cameraMode,
+    setCameraMode
   } = useCadastre();
 
   const calculateBoundingBox = useCallback((entity: any): BoundingBox | null => {
@@ -132,7 +162,7 @@ export const CesiumViewer: React.FC = () => {
     return new Cesium.BoundingSphere(center, maxDist * 1.2);
   }, []);
 
-  const flyToEntity = useCallback((entityId: string, mode: keyof typeof CAMERA_MODES = 'building') => {
+  const flyToEntity = useCallback((entityId: string, mode: CameraModeKey = 'building') => {
     const viewer = viewerRef.current;
     if (!viewer) return;
 
@@ -586,6 +616,339 @@ export const CesiumViewer: React.FC = () => {
     handleUnderground();
   }, [layers.roads, layers.underground]);
 
+  // Underground visualization: enable globe translucency and disable collision detection
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || !viewer.scene || !viewer.scene.globe) return;
+
+    if (layers.underground) {
+      viewer.scene.globe.translucency.enabled = true;
+      viewer.scene.globe.translucency.frontFaceAlpha = 0.55;
+      viewer.scene.globe.translucency.backFaceAlpha = 0.35;
+      viewer.scene.screenSpaceCameraController.enableCollisionDetection = false;
+    } else {
+      viewer.scene.globe.translucency.enabled = false;
+      viewer.scene.screenSpaceCameraController.enableCollisionDetection = true;
+    }
+  }, [layers.underground]);
+
+  // Section Clipping Plane effect
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || !viewer.scene || !viewer.scene.globe) return;
+
+    if (activeTool === 'section') {
+      setSectionPlaneActive(true);
+      // Create clipping plane cutting vertically down at the given elevation
+      // Normal pointing DOWN (0, 0, -1) with distance = sectionHeight
+      const plane = new Cesium.ClippingPlane(
+        new Cesium.Cartesian3(0.0, 0.0, -1.0),
+        sectionHeight
+      );
+      const collection = new Cesium.ClippingPlaneCollection({
+        planes: [plane],
+        edgeWidth: 2.0,
+        edgeColor: Cesium.Color.fromCssColorString('#38bdf8'),
+        unionClippingRegions: false,
+        enabled: true
+      });
+      viewer.scene.globe.clippingPlanes = collection;
+    } else {
+      setSectionPlaneActive(false);
+      viewer.scene.globe.clippingPlanes = undefined;
+    }
+  }, [activeTool, sectionHeight]);
+
+  // LiDAR Point Cloud Simulation effect
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+
+    if (layers.lidarPointCloud) {
+      if (!pointCloudPrimitivesRef.current) {
+        const pointCollection = viewer.scene.primitives.add(new Cesium.PointPrimitiveCollection());
+        // Generate realistic LiDAR scan points around the center coordinates
+        const center = activeJurisdiction?.center || [77.5925, 12.9725];
+        const numPoints = 1200;
+        
+        for (let i = 0; i < numPoints; i++) {
+          // Spread in ~150m radius
+          const offsetLon = (Math.random() - 0.5) * 0.003;
+          const offsetLat = (Math.random() - 0.5) * 0.003;
+          const lon = center[0] + offsetLon;
+          const lat = center[1] + offsetLat;
+          
+          // Realistic building elevation distribution: ground points, wall points, roof points
+          let z = 0;
+          const r = Math.random();
+          if (r < 0.3) {
+            z = Math.random() * 0.5; // ground
+          } else if (r < 0.7) {
+            z = Math.random() * 22; // building facades
+          } else {
+            z = 18 + Math.random() * 4; // roofs
+          }
+
+          // Spectrum color ramp: blue (low) -> cyan -> green -> yellow -> red (high)
+          let color = Cesium.Color.fromCssColorString('#3b82f6');
+          if (z < 2) color = Cesium.Color.fromCssColorString('#10b981');
+          else if (z < 8) color = Cesium.Color.fromCssColorString('#06b6d4');
+          else if (z < 15) color = Cesium.Color.fromCssColorString('#eab308');
+          else color = Cesium.Color.fromCssColorString('#ef4444');
+
+          pointCollection.add({
+            position: Cesium.Cartesian3.fromDegrees(lon, lat, (activeJurisdiction?.elevation_m || 0) + z),
+            color: color.withAlpha(0.85),
+            pixelSize: 3.5
+          });
+        }
+        pointCloudPrimitivesRef.current = pointCollection;
+      }
+      pointCloudPrimitivesRef.current.show = true;
+    } else if (pointCloudPrimitivesRef.current) {
+      pointCloudPrimitivesRef.current.show = false;
+    }
+  }, [layers.lidarPointCloud, activeJurisdiction]);
+
+  // DEM / DSM Grid Wireframe Simulation effect
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+
+    if (layers.demDsm) {
+      if (!demPrimitivesRef.current) {
+        const polylineCollection = viewer.scene.primitives.add(new Cesium.PolylineCollection());
+        const center = activeJurisdiction?.center || [77.5925, 12.9725];
+        const gridStep = 0.0004;
+        const gridCount = 10;
+        const startLon = center[0] - (gridCount * gridStep) / 2;
+        const startLat = center[1] - (gridCount * gridStep) / 2;
+
+        // Longitude lines
+        for (let i = 0; i <= gridCount; i++) {
+          const lon = startLon + i * gridStep;
+          const pos = [
+            Cesium.Cartesian3.fromDegrees(lon, startLat, 0.5),
+            Cesium.Cartesian3.fromDegrees(lon, startLat + gridCount * gridStep, 0.5)
+          ];
+          polylineCollection.add({
+            positions: pos,
+            width: 1.5,
+            material: Cesium.Material.fromType('Color', {
+              color: Cesium.Color.fromCssColorString('#14b8a6').withAlpha(0.4)
+            })
+          });
+        }
+
+        // Latitude lines
+        for (let j = 0; j <= gridCount; j++) {
+          const lat = startLat + j * gridStep;
+          const pos = [
+            Cesium.Cartesian3.fromDegrees(startLon, lat, 0.5),
+            Cesium.Cartesian3.fromDegrees(startLon + gridCount * gridStep, lat, 0.5)
+          ];
+          polylineCollection.add({
+            positions: pos,
+            width: 1.5,
+            material: Cesium.Material.fromType('Color', {
+              color: Cesium.Color.fromCssColorString('#14b8a6').withAlpha(0.4)
+            })
+          });
+        }
+        demPrimitivesRef.current = polylineCollection;
+      }
+      demPrimitivesRef.current.show = true;
+    } else if (demPrimitivesRef.current) {
+      demPrimitivesRef.current.show = false;
+    }
+  }, [layers.demDsm, activeJurisdiction]);
+
+  // Camera Mode handler (TOP_DOWN 2D, ORBIT Turntable, CITY, PARCEL, BUILDING, FLOOR, UNIT)
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+
+    // Clear existing orbit tick listener if active
+    if (orbitListenerRef.current) {
+      viewer.clock.onTick.removeEventListener(orbitListenerRef.current);
+      orbitListenerRef.current = null;
+    }
+
+    if (cameraMode === 'TOP_DOWN') {
+      viewer.scene.morphTo2D(1.2);
+    } else {
+      if (viewer.scene.mode === Cesium.SceneMode.SCENE2D) {
+        viewer.scene.morphTo3D(1.2);
+      }
+
+      if (cameraMode === 'ORBIT') {
+        const rotateCallback = () => {
+          viewer.camera.rotate(Cesium.Cartesian3.UNIT_Z, -0.004);
+        };
+        viewer.clock.onTick.addEventListener(rotateCallback);
+        orbitListenerRef.current = rotateCallback;
+      } else if (cameraMode === 'CITY') {
+        const center = activeJurisdiction?.center || [77.5925, 12.9725];
+        viewer.camera.flyTo({
+          destination: Cesium.Cartesian3.fromDegrees(center[0], center[1], 1800),
+          orientation: {
+            heading: Cesium.Math.toRadians(35),
+            pitch: Cesium.Math.toRadians(-30),
+            roll: 0.0
+          },
+          duration: 1.2
+        });
+      } else if (cameraMode === 'PARCEL') {
+        const center = activeJurisdiction?.center || [77.5925, 12.9725];
+        viewer.camera.flyTo({
+          destination: Cesium.Cartesian3.fromDegrees(center[0], center[1], 600),
+          orientation: {
+            heading: Cesium.Math.toRadians(45),
+            pitch: Cesium.Math.toRadians(-35),
+            roll: 0.0
+          },
+          duration: 1.2
+        });
+      } else if (cameraMode === 'BUILDING' && selectedEntity) {
+        flyToEntity(selectedEntity.entity_id, 'building');
+      } else if (cameraMode === 'FLOOR' && selectedEntity) {
+        flyToEntity(selectedEntity.entity_id, 'floor');
+      } else if (cameraMode === 'UNIT' && selectedEntity) {
+        flyToEntity(selectedEntity.entity_id, 'unit');
+      }
+    }
+
+    return () => {
+      if (orbitListenerRef.current && viewer && viewer.clock) {
+        viewer.clock.onTick.removeEventListener(orbitListenerRef.current);
+        orbitListenerRef.current = null;
+      }
+    };
+  }, [cameraMode, activeJurisdiction, selectedEntity, flyToEntity]);
+
+  // Measurement Tool Screen-Space Event Handler
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+
+    if (activeTool !== 'measure') {
+      if (measureHandlerRef.current) {
+        measureHandlerRef.current.destroy();
+        measureHandlerRef.current = null;
+      }
+      return;
+    }
+
+    const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+    let pts: any[] = [];
+
+    handler.setInputAction((movement: any) => {
+      const ray = viewer.camera.getPickRay(movement.position);
+      const position = viewer.scene.globe.pick(ray, viewer.scene);
+      if (!position) return;
+
+      pts.push(position);
+      setMeasurePoints([...pts]);
+
+      if (pts.length === 1) {
+        // First point picked
+        const cart1 = Cesium.Cartographic.fromCartesian(pts[0]);
+        setMeasureResult({
+          distance: 0,
+          deltaZ: 0,
+          horizDist: 0,
+          p1: {
+            lon: Cesium.Math.toDegrees(cart1.longitude),
+            lat: Cesium.Math.toDegrees(cart1.latitude),
+            height: cart1.height
+          }
+        });
+
+        // Add temporary polyline
+        if (measureEntityRef.current) {
+          viewer.entities.remove(measureEntityRef.current);
+        }
+        measureEntityRef.current = viewer.entities.add({
+          polyline: {
+            positions: new Cesium.CallbackProperty(() => {
+              return pts.length === 2 ? pts : [pts[0], pts[0]];
+            }, false),
+            width: 3,
+            material: Cesium.Color.fromCssColorString('#38bdf8'),
+            depthFailMaterial: Cesium.Color.fromCssColorString('#38bdf8').withAlpha(0.5)
+          },
+          point: {
+            pixelSize: 8,
+            color: Cesium.Color.fromCssColorString('#38bdf8'),
+            outlineColor: Cesium.Color.WHITE,
+            outlineWidth: 2
+          }
+        });
+      } else if (pts.length === 2) {
+        // Second point picked - finalize measurement
+        const cart1 = Cesium.Cartographic.fromCartesian(pts[0]);
+        const cart2 = Cesium.Cartographic.fromCartesian(pts[1]);
+        
+        const euclidDist = Cesium.Cartesian3.distance(pts[0], pts[1]);
+        const dZ = Math.abs(cart2.height - cart1.height);
+        const dH = Math.sqrt(Math.max(0, euclidDist * euclidDist - dZ * dZ));
+
+        setMeasureResult({
+          distance: euclidDist,
+          deltaZ: dZ,
+          horizDist: dH,
+          p1: {
+            lon: Cesium.Math.toDegrees(cart1.longitude),
+            lat: Cesium.Math.toDegrees(cart1.latitude),
+            height: cart1.height
+          },
+          p2: {
+            lon: Cesium.Math.toDegrees(cart2.longitude),
+            lat: Cesium.Math.toDegrees(cart2.latitude),
+            height: cart2.height
+          }
+        });
+
+        // Add midpoint badge
+        const midpoint = Cesium.Cartesian3.midpoint(pts[0], pts[1], new Cesium.Cartesian3());
+        viewer.entities.add({
+          position: midpoint,
+          label: {
+            text: `Dist: ${euclidDist.toFixed(2)}m\nΔZ: ${dZ.toFixed(2)}m`,
+            font: '12px monospace',
+            fillColor: Cesium.Color.WHITE,
+            backgroundColor: Cesium.Color.fromCssColorString('#0b0f19').withAlpha(0.85),
+            showBackground: true,
+            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+            pixelOffset: new Cesium.Cartesian2(0, -10)
+          }
+        });
+
+        // Reset points for subsequent measurement
+        pts = [];
+      }
+    }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+    measureHandlerRef.current = handler;
+
+    return () => {
+      if (measureHandlerRef.current) {
+        measureHandlerRef.current.destroy();
+        measureHandlerRef.current = null;
+      }
+    };
+  }, [activeTool]);
+
+  const clearMeasurements = () => {
+    setMeasurePoints([]);
+    setMeasureResult(null);
+    const viewer = viewerRef.current;
+    if (viewer && measureEntityRef.current) {
+      viewer.entities.remove(measureEntityRef.current);
+      measureEntityRef.current = null;
+    }
+  };
+
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
@@ -663,6 +1026,105 @@ export const CesiumViewer: React.FC = () => {
         </div>
       )}
 
+      {/* Interactive Measurement HUD */}
+      {activeTool === 'measure' && (
+        <div className="absolute top-20 left-4 p-4 rounded-xl bg-[#0d1321]/92 backdrop-blur-xl border border-cyan-500/30 shadow-2xl z-20 w-72 text-xs animate-in fade-in duration-200">
+          <div className="flex items-center justify-between pb-2 mb-3 border-b border-white/10">
+            <div className="flex items-center space-x-2">
+              <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></span>
+              <span className="font-bold text-white uppercase tracking-wider">3D Measurement Tool</span>
+            </div>
+            <button
+              onClick={() => setActiveTool('select')}
+              className="text-slate-400 hover:text-white text-[11px]"
+            >
+              Close
+            </button>
+          </div>
+
+          <div className="text-[11px] text-slate-300 mb-3 leading-relaxed">
+            Click two points on the terrain, building facades, or roof structures to measure 3D spatial distance and vertical height differential.
+          </div>
+
+          <div className="space-y-2 bg-slate-900/60 p-2.5 rounded-lg border border-white/5 font-mono text-[11px]">
+            <div className="flex justify-between">
+              <span className="text-slate-400">Euclidean Distance:</span>
+              <span className="text-cyan-300 font-bold">
+                {measureResult ? `${measureResult.distance.toFixed(2)} m` : '---'}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-400">Height Diff (ΔZ):</span>
+              <span className="text-emerald-300 font-bold">
+                {measureResult ? `${measureResult.deltaZ.toFixed(2)} m` : '---'}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-400">Horizontal Dist:</span>
+              <span className="text-purple-300 font-bold">
+                {measureResult ? `${measureResult.horizDist.toFixed(2)} m` : '---'}
+              </span>
+            </div>
+          </div>
+
+          <div className="mt-3 flex items-center justify-between">
+            <button
+              onClick={clearMeasurements}
+              className="px-2.5 py-1 text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 rounded transition"
+            >
+              Clear Marks
+            </button>
+            <span className="text-[10px] text-slate-500">
+              {measurePoints.length === 1 ? 'Pick 2nd point...' : 'Ready for pick'}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Interactive Section / Clipping Plane HUD */}
+      {activeTool === 'section' && (
+        <div className="absolute top-20 left-4 p-4 rounded-xl bg-[#0d1321]/92 backdrop-blur-xl border border-blue-500/30 shadow-2xl z-20 w-72 text-xs animate-in fade-in duration-200">
+          <div className="flex items-center justify-between pb-2 mb-3 border-b border-white/10">
+            <div className="flex items-center space-x-2">
+              <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse"></span>
+              <span className="font-bold text-white uppercase tracking-wider">Dynamic Section Plane</span>
+            </div>
+            <button
+              onClick={() => setActiveTool('select')}
+              className="text-slate-400 hover:text-white text-[11px]"
+            >
+              Close
+            </button>
+          </div>
+
+          <div className="text-[11px] text-slate-300 mb-3 leading-relaxed">
+            Slice vertically across building volumes and subterranean structures to inspect interior cadastre slices and floor envelopes.
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex justify-between items-center text-[11px]">
+              <span className="text-slate-400 font-medium">Cut Elevation Datum:</span>
+              <span className="font-mono text-cyan-400 font-bold">{sectionHeight} m</span>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="60"
+              step="1"
+              value={sectionHeight}
+              onChange={(e) => setSectionHeight(Number(e.target.value))}
+              className="w-full h-1.5 bg-slate-900 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+            />
+            <div className="flex justify-between text-[9px] text-slate-500 font-mono">
+              <span>0m (Ground)</span>
+              <span>30m (Mid-Rise)</span>
+              <span>60m (Tower)</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* View Mode & Camera Preset Controls (Bottom Right) */}
       <div className="absolute bottom-16 right-4 flex flex-col items-end space-y-2 z-10 pointer-events-none">
         <div className="flex items-center space-x-2 pointer-events-auto">
           <span className="text-[10px] text-slate-400 uppercase tracking-wider">View</span>
